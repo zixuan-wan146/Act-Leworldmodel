@@ -1,0 +1,4 @@
+[submodule "third_party/le-wm"]
+	path = third_party/le-wm
+	url = https://github.com/lucas-maes/le-wm.git
+	ignore = untracked
