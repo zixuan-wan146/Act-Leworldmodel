@@ -1,0 +1,9 @@
+_target_: models.policies.GCIDMPolicy
+latent_dim: 192
+action_dim: ???
+hidden_dim: 512
+depth: 3
+dropout: 0.1
+horizon_dim: 64
+max_horizon: 50
+output_init_std: 0.01

@@ -1,0 +1,40 @@
+_target_: models.world_model.FastLeWMBackbone
+interpolate_pos_encoding: true
+
+encoder:
+  _target_: stable_pretraining.backbone.utils.vit_hf
+  size: tiny
+  patch_size: 14
+  image_size: ${image_size}
+  pretrained: false
+  use_mask_token: false
+
+projector:
+  _target_: models.world_model.ProjectionMLP
+  input_dim: ${latent_dim}
+  hidden_dim: 2048
+  output_dim: ${latent_dim}
+
+dynamics:
+  _target_: models.world_model.PrefixDynamics
+  prefix_encoder:
+    _target_: models.world_model.ActionPrefixEncoder
+    action_dim: ???
+    latent_dim: ${latent_dim}
+    token_dim: 192
+    state_hidden_dim: 768
+    action_hidden_dim: 768
+    depth: 3
+    heads: 6
+    head_dim: 32
+    mlp_dim: 768
+    dropout: 0.1
+    max_horizon: ${max_horizon}
+  predictor:
+    _target_: models.world_model.ParallelLatentPredictor
+    latent_dim: ${latent_dim}
+    prefix_dim: 192
+    hidden_dim: 2048
+    fusion_dim: 768
+    depth: 6
+    dropout: 0.1

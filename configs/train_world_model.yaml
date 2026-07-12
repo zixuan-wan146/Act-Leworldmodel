@@ -1,0 +1,50 @@
+defaults:
+  - _self_
+  - data: pusht
+  - world_model@model: fast_lewm
+
+output_model_name: fast_lewm_backbone
+subdir: ${hydra:job.id}
+seed: 3072
+image_size: 224
+latent_dim: 192
+max_horizon: 5
+train_split: 0.9
+checkpoint_interval: 1
+
+trainer:
+  max_epochs: 10
+  devices: auto
+  accelerator: gpu
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  num_sanity_val_steps: 1
+
+loader:
+  batch_size: ${data.batch_size}
+  num_workers: 6
+  persistent_workers: true
+  prefetch_factor: 3
+  pin_memory: true
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+objective:
+  _target_: losses.DensePrefixObjective
+  sigreg_weight: 0.09
+  sigreg_knots: 17
+  sigreg_num_projections: 1024
+
+wandb:
+  enabled: false
+  config:
+    entity: null
+    project: act-leworldmodel
+    name: ${output_model_name}-${hydra:job.id}
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

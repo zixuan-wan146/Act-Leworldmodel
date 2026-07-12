@@ -1,0 +1,43 @@
+defaults:
+  - _self_
+  - policy: larc_chunk
+
+latent_cache: ???
+output_dir: outputs/checkpoints/larc
+output_model_name: larc_chunk
+seed: 42
+train_split: 0.9
+checkpoint_interval: 1
+
+world_model:
+  config_path: ???
+  weights_path: ???
+
+loader:
+  batch_size: 256
+  num_workers: 4
+  persistent_workers: true
+  pin_memory: true
+
+optimizer:
+  lr: 1e-3
+  weight_decay: 1e-4
+
+objective:
+  _target_: losses.LARCRolloutConsistencyObjective
+  behavior_weight: 1.0
+  consistency_weight: 1.0
+
+trainer:
+  max_epochs: 50
+  devices: auto
+  accelerator: gpu
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+
+wandb:
+  enabled: false
+  config:
+    entity: null
+    project: act-leworldmodel
+    name: larc-chunk
