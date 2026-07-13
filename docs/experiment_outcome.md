@@ -12,11 +12,11 @@ lower evaluation times than online CEM:
 
 | Method | Successes | Success rate | 95% Wilson CI | Evaluation time | Difference from CEM |
 |---|---:|---:|---:|---:|---:|
-| CEM | 41/50 | 82.0% | [69.2%, 90.2%] | 52.4 s | - |
-| GC-IDM | 47/50 | 94.0% | [83.8%, 97.9%] | 6.4 s | +12 percentage points |
-| LARC | 46/50 | 92.0% | [81.2%, 96.8%] | 5.9 s | +10 percentage points |
+| CEM | 41/50 | 82.0% | [69.2%, 90.2%] | 72.3 s | - |
+| GC-IDM | 47/50 | 94.0% | [83.8%, 97.9%] | 5.2 s | +12 percentage points |
+| LARC | 46/50 | 92.0% | [81.2%, 96.8%] | 4.6 s | +10 percentage points |
 
-GC-IDM was about 8.2 times faster than CEM and LARC about 8.8 times faster for
+GC-IDM was about 13.9 times faster than CEM and LARC about 15.6 times faster for
 the complete 50-episode evaluation. These ratios describe this run, not an
 isolated controller-latency benchmark.
 
@@ -24,6 +24,12 @@ isolated controller-latency benchmark.
 
 The compact result table is also available in
 [the result summary](../results/RESULTS_pusht.md).
+
+The hardened aggregate rates happen to match the pre-hardening table, but the
+per-episode results are not fully identical. GC-IDM and LARC match row for row.
+CEM changed at zero-based manifest rows 19 and 27: episode 8408 changed from
+failure to success, while episode 11863 changed from success to failure. The
+opposite changes preserve 41/50, so the new raw CEM result remains authoritative.
 
 ## Run provenance
 
@@ -35,13 +41,20 @@ The production run used:
 - evaluation seed 42;
 - a released Push-T LeWM checkpoint with SHA-256
   `c57169554d6ce0da6c7f100c67d84daf9cf7fb568558bfe106cc22d6c33ad624`;
-- the repository state containing this report and its associated implementation
-  changes.
+- a portable released-LeWM tensor artifact with SHA-256
+  `446262af36abba313e4436287dc904b68a49f4fda045fa1f974dd9959f532002`;
+- one shared manifest with SHA-256
+  `9288432743b283da8b7d3e933f61b888cf9335da1170641f5c38a2ecc1ec389c`.
 
-The exact source tree used for this experiment was committed as `5e35041`.
-Resolved Hydra configs and raw metrics remain with the external run artifacts.
-Subsequent hardening changes preserve that result provenance rather than
-silently claiming that an older run was produced by newer code.
+The training and open-loop artifacts were produced from source tree `5e35041`.
+Closed-loop evaluation was rerun from the clean, self-contained evaluation
+commit `1af58196d5a62bdcb7fc39e421e469a70d0aa974`. That implementation reconstructs
+the released architecture from project configuration, loads only tensor state
+dictionaries, and uses project-owned Push-T and CEM code. The prior raw
+closed-loop JSON files remain preserved but are not the source of the current
+report. Resolved Hydra configs and raw metrics remain with the external run
+artifacts; the evaluated file hashes are listed in
+[the result summary](../results/RESULTS_pusht.md).
 
 ## Dataset and split
 
@@ -153,10 +166,17 @@ LARC, and Fast-LeWM used the new training-episode-only action statistics. This
 is intentional: each controller must receive the normalization used during its
 own training.
 
+The self-contained evaluator restores the fixed Push-T physics state directly
+from each manifest row. Its nonzero-angle state restoration and rendered
+trajectory are locked by a golden regression test. Rows that have already
+terminated are excluded before any controller call, so they cannot consume CEM
+random samples or alter another episode's plan.
+
 The CEM configuration used 300 candidates, 30 refinement steps, a top 30 set,
-a five-block planning horizon, and warm starting. Its online optimization
-explains the much higher evaluation time relative to the single-forward-pass
-learned policies.
+and a five-block planning and receding horizon. Warm start is enabled in the
+configuration, but the full-horizon commitment leaves no unexecuted tail to
+reuse. Online optimization explains the much higher evaluation time relative
+to the single-forward-pass learned policies.
 
 ## Interpretation
 
@@ -209,9 +229,9 @@ for evaluation times recorded directly by the evaluator:
 | Open-loop evaluation | 7 s | Metrics JSON and curve |
 | GC-IDM training | 16 min 19 s | Best/last policy weights |
 | LARC training | 1 h 7 min 44 s | Best/last policy weights |
-| CEM closed loop | 52.4 s | 50 per-episode outcomes |
-| GC-IDM closed loop | 6.4 s | 50 per-episode outcomes |
-| LARC closed loop | 5.9 s | 50 per-episode outcomes |
+| CEM closed loop | 72.3 s | 50 per-episode outcomes |
+| GC-IDM closed loop | 5.2 s | 50 per-episode outcomes |
+| LARC closed loop | 4.6 s | 50 per-episode outcomes |
 
 All configured training epochs completed normally. There were no tracebacks in
 the production evaluation logs.
@@ -221,14 +241,22 @@ the production evaluation logs.
 After the implementation changes and before the final production evaluation,
 the remote project environment passed:
 
-- `python -m pytest -q`: 18 tests passed;
+- `python -m pytest -q`: 37 tests passed while imports of `stable_worldmodel`,
+  `stable_pretraining`, `jepa`, and `module` were explicitly blocked;
 - `python -m ruff check .`;
 - `python -m ruff format --check .`;
-- `git diff --check`.
+- `git diff --check`;
+- offline `uv lock --check` and every Hydra configuration build;
+- strict loading of the released tensor artifact and existing Fast-LeWM
+  weights without reference-package imports;
+- reuse of all 2,336,736 cached frame latents without re-encoding.
 
-A two-episode miniature dataset was also used to smoke-test latent caching,
-all three trainers, all three closed-loop methods, open-loop evaluation, and
-summary generation before the production run.
+The project-owned ReleasedLeWM was also compared with the trusted legacy object
+on identical random images and candidate actions: encoded latents and CEM costs
+had zero elementwise error. The project Push-T environment matched the reference
+state, reward, termination flag, and rendered pixels over nonzero-angle rollout
+checks. A two-episode, two-step run then exercised all three closed-loop methods
+and the provenance-aware summarizer before the clean-commit production run.
 
 ## Artifact map
 
@@ -250,8 +278,11 @@ Large artifacts remain outside Git under configured roots:
 | Fast-LeWM checkpoints | `$ACT_LEWM_RUN_ROOT/pusht/world_model` |
 | GC-IDM checkpoints | `$ACT_LEWM_RUN_ROOT/pusht/gc_idm` |
 | LARC checkpoints | `$ACT_LEWM_RUN_ROOT/pusht/larc` |
-| Raw evaluation JSON and manifest | `$ACT_LEWM_RUN_ROOT/pusht/eval` |
+| Fixed evaluation manifest | `$ACT_LEWM_RUN_ROOT/pusht/eval/protocol_seed_42.json` |
+| Hardened raw evaluation JSON | `$ACT_LEWM_RUN_ROOT/pusht/eval_self_contained_1af5819` |
 | Open-loop raw metrics | `$ACT_LEWM_RUN_ROOT/pusht/open_loop` |
+
+Historical pre-hardening result JSON files remain under `$ACT_LEWM_RUN_ROOT/pusht/eval`.
 
 The complete configured sequence can be reproduced with:
 
