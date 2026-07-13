@@ -40,7 +40,13 @@ class FrozenWorldModel(nn.Module):
 
     def encode_observations(self, pixels: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
-            return self.backbone.encode_observations(pixels).detach()
+            with torch.autocast(
+                device_type=pixels.device.type,
+                dtype=torch.bfloat16,
+                enabled=pixels.device.type == "cuda",
+            ):
+                latents = self.backbone.encode_observations(pixels)
+            return latents.float().detach()
 
     def predict_latents(
         self,

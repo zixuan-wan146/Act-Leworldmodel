@@ -2,21 +2,25 @@ defaults:
   - _self_
   - policy: larc_chunk
 
-latent_cache: ???
-output_dir: outputs/checkpoints/larc
+latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/larc
 output_model_name: larc_chunk
-seed: 42
-train_split: 0.9
-checkpoint_interval: 1
+seed: 3072
+checkpoint_interval: 5
 
 world_model:
-  config_path: ???
-  weights_path: ???
+  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/model_config.yaml
+  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/fast_lewm_backbone_best.pt
+
+data:
+  max_train_samples: null
+  max_validation_samples: 100000
 
 loader:
-  batch_size: 256
-  num_workers: 4
+  batch_size: 1024
+  num_workers: 6
   persistent_workers: true
+  prefetch_factor: 3
   pin_memory: true
 
 optimizer:
@@ -27,17 +31,26 @@ objective:
   _target_: losses.LARCRolloutConsistencyObjective
   behavior_weight: 1.0
   consistency_weight: 1.0
+  frameskip: 5
 
 trainer:
   max_epochs: 50
-  devices: auto
+  devices: 1
   accelerator: gpu
   precision: bf16-mixed
   gradient_clip_val: 1.0
+  num_sanity_val_steps: 1
+  enable_model_summary: false
+  enable_progress_bar: false
+  log_every_n_steps: 50
 
 wandb:
   enabled: false
   config:
     entity: null
     project: act-leworldmodel
-    name: larc-chunk
+    name: larc-pusht
+
+hydra:
+  run:
+    dir: ${output_dir}/hydra

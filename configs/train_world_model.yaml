@@ -1,50 +1,59 @@
 defaults:
   - _self_
-  - data: pusht
   - world_model@model: fast_lewm
 
+latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
+source_checkpoint: ${oc.env:PUSHT_LEWM_CHECKPOINT}
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model
 output_model_name: fast_lewm_backbone
-subdir: ${hydra:job.id}
+
 seed: 3072
 image_size: 224
 latent_dim: 192
 max_horizon: 5
-train_split: 0.9
+freeze_representation: true
 checkpoint_interval: 1
 
-trainer:
-  max_epochs: 10
-  devices: auto
-  accelerator: gpu
-  precision: bf16-mixed
-  gradient_clip_val: 1.0
-  num_sanity_val_steps: 1
+data:
+  max_train_samples: null
+  max_validation_samples: 100000
 
 loader:
-  batch_size: ${data.batch_size}
+  batch_size: 1024
   num_workers: 6
   persistent_workers: true
   prefetch_factor: 3
   pin_memory: true
 
 optimizer:
-  type: AdamW
   lr: 5e-5
   weight_decay: 1e-3
 
 objective:
   _target_: losses.DensePrefixObjective
-  sigreg_weight: 0.09
+  # The reused encoder was already trained with SIGReg; cached latents are frozen.
+  sigreg_weight: 0.0
   sigreg_knots: 17
   sigreg_num_projections: 1024
+
+trainer:
+  max_epochs: 10
+  devices: 1
+  accelerator: gpu
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  num_sanity_val_steps: 1
+  enable_model_summary: false
+  enable_progress_bar: false
+  log_every_n_steps: 50
 
 wandb:
   enabled: false
   config:
     entity: null
     project: act-leworldmodel
-    name: ${output_model_name}-${hydra:job.id}
+    name: fast-lewm-pusht
 
 hydra:
   run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ${output_dir}/hydra

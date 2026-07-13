@@ -1,99 +1,117 @@
 # Act-LeWorldModel
 
-Action-aware world-model training and evaluation built on LeWorldModel.
+Act-LeWorldModel compares three goal-conditioned Push-T controllers under one
+fixed evaluation protocol:
 
-The project separates a planner-agnostic Fast-LeWM backbone from two learned
-controllers over frozen latents:
+- **CEM**: the released LeWM model with online cross-entropy planning.
+- **GC-IDM**: a one-action amortized inverse-dynamics policy, replanned every
+  environment step.
+- **LARC**: a learned action-block policy trained with behavior cloning and a
+  differentiable frozen-world-model rollout-consistency loss.
 
-- **GC-IDM** predicts one action from current/goal latents and the remaining
-  horizon, then re-encodes the real observation at every environment step.
-- **LARC-Chunk** predicts an action chunk. During training, the chunk is rolled
-  through frozen latent dynamics and its terminal prediction is constrained
-  toward the goal latent.
+The visual encoder and projector are reused from the released LeWM checkpoint.
+Every dataset frame is encoded once, then Fast-LeWM dynamics and both learned
+policies train from the same episode-separated latent cache.
 
-The reproduced CEM path is retained only as an evaluation baseline under
-`controllers/baselines`; it is not a model or a dependency of either policy.
+## Environment and storage
 
-## Setup
-
-```bash
-git submodule update --init --recursive
-uv venv --python=3.10
-uv pip install -e .
-```
-
-Datasets are resolved through `stable-worldmodel`; set `STABLEWM_HOME` or
-`LOCAL_DATASET_DIR` for local storage.
-
-## Train the world model
+Use the existing LeWM Python environment. Datasets, caches, checkpoints, logs,
+videos, and raw metrics belong outside the repository. Configure their roots
+before running an experiment:
 
 ```bash
-train-world-model data=pusht
+export PUSHT_DATASET_PATH=/data/datasets/pusht_expert_train.h5
+export PUSHT_LEWM_CHECKPOINT=/data/checkpoints/pusht/lewm_object.ckpt
+export ACT_LEWM_CACHE_ROOT=/data/act-lewm-cache
+export ACT_LEWM_RUN_ROOT=/data/act-lewm-runs
+export SPT_CACHE_DIR=/data/stable-pretraining-cache
+export HF_HOME=/data/huggingface-cache
 ```
 
-Available dataset configurations are `pusht`, `tworoom`, `reacher`, and
-`cube`. Defaults follow the Fast-LeWM paper where the implementation is
-specified: horizon 5, latent width 192, a 3-layer/6-head prefix Transformer,
-a 6-block action-modulated predictor, ten epochs, and batch size 128 (32 for
-Cube).
+Install the project and its test dependency into that environment:
 
-The Fast-LeWM authors have not released their source code yet. Tokenizer and
-residual-block details not fixed by the paper are therefore explicit in
-[`configs/world_model/fast_lewm.yaml`](configs/world_model/fast_lewm.yaml) for later
-reconciliation.
+```bash
+python -m pip install -e '.[test]'
+```
 
-## Train amortized controllers
+The first four variables are required; the last two keep library caches off
+the system disk. No project config contains a personal absolute path.
 
-Both learned policies consume a tensor cache produced from a frozen encoder.
-This keeps image encoding out of the policy-training hot path.
+## Push-T action protocol
 
-GC-IDM caches require:
+Push-T exposes a two-dimensional action at each environment step. Fast-LeWM
+uses `frameskip=5`, so one dynamics action is a 10-dimensional block formed by
+normalizing and concatenating five raw actions.
 
 ```text
-current_latent:  [N, latent_dim]
-goal_latent:     [N, latent_dim]
-steps_remaining:[N]
-action:          [N, action_dim]  # normalized/model action coordinates
+raw environment actions [B, 25, 2]
+    -> normalize with train-episode statistics
+    -> pack five consecutive actions
+world-model blocks      [B,  5, 10]
 ```
 
-LARC caches require:
+LARC predicts five such blocks, covering 25 environment steps, and executes
+five raw actions before replanning. GC-IDM predicts one normalized raw action
+and replans immediately. The conversion is centralized in
+`ActionBlockTransform`; block-shaped actions are never sent directly to the
+environment.
 
-```text
-current_latent:  [N, latent_dim]
-goal_latent:     [N, latent_dim]
-steps_remaining:[N]
-action_chunk:    [N, chunk_size, action_dim]  # normalized/model coordinates
-```
+## Reproducible workflow
 
-Train with:
+The complete workflow is:
 
 ```bash
-train-gc-idm latent_cache=/path/to/gc_idm_cache.pt
-
-train-larc \
-  latent_cache=/path/to/larc_cache.pt \
-  world_model.config_path=/path/to/model_config.yaml \
-  world_model.weights_path=/path/to/fast_lewm_backbone_epoch_10.pt
+python -m train.cache_latents
+python -m train.train_world_model
+python -m eval.open_loop_curve
+python -m train.train_gc_idm
+python -m train.train_larc
+python -m eval.closed_loop method=cem
+python -m eval.closed_loop method=gc_idm
+python -m eval.closed_loop method=larc
+python -m eval.summarize "$ACT_LEWM_RUN_ROOT/pusht/eval" results --seed 42
 ```
 
-The LARC loss freezes all world-model parameters while retaining gradients
-from the terminal latent through the predicted actions to the chunk policy.
-Learned policies operate in the same normalized action coordinates as the
-world model. Their controllers accept an `ActionTransform` and decode policy
-outputs back to environment action units before execution.
+The same sequence is available as `scripts/pusht_full.sh`. Every stage is
+configuration-driven and writes resumable checkpoints or deterministic cache
+metadata under the external roots.
+
+New dynamics and policy training use seed `3072`. Whole episodes are split
+90/10 before their normalization or clip creation, so overlapping trajectory
+windows cannot cross the new train/validation boundary. The reused released
+LeWM representation and CEM checkpoint retain their upstream clip-level split
+provenance; see `docs/pusht_protocol.md`. Closed-loop evaluation uses seed
+`42`, 50 validation episodes, goal offset 25, and one shared manifest stored
+with the external raw metrics.
+
+## Tests
+
+```bash
+python -m pytest -q
+python -m ruff check .
+python -m ruff format --check .
+git diff --check
+```
+
+Tests cover action packing, episode separation, cache indexing, causal masks,
+AdaLN-zero initialization, frozen parameter behavior, action gradients, and
+variable-horizon LARC losses. `scripts/phase0_smoke.sh` also validates that all
+Hydra configurations compose.
 
 ## Backbone API
 
 ```python
 latents = model.encode_observations(pixels)
-future_latents = model.predict_latents(latents[:, 0], action_sequence)
+future_latents = model.predict_latents(latents, action_blocks)
 ```
 
-`predict_latents` accepts arbitrary leading batch dimensions, so a future
-planner can pass `[batch, candidates, horizon, action_dim]` without coupling
-its implementation to the dynamics model.
+`predict_latents` accepts arbitrary leading batch dimensions and returns one
+latent prediction for every causal action prefix. It is independent of CEM,
+goals, and controller state.
 
-The latest static architecture review is recorded in
-[`docs/controller_refactor_review.md`](docs/controller_refactor_review.md).
-Project documentation is maintained under [`docs/`](docs/). Datasets,
-checkpoints, caches, logs, and generated outputs stay outside this repository.
+Project design documents live under `docs/`. Versionable result summaries and
+figures live under `results/`; large artifacts remain outside the repository.
+
+The completed Push-T run, quantitative outcomes, interpretation, and
+limitations are documented in
+[`docs/experiment_outcome.md`](docs/experiment_outcome.md).

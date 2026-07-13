@@ -34,6 +34,15 @@ class PrefixDynamics(nn.Module):
     def max_horizon(self) -> int:
         return self.prefix_encoder.max_horizon
 
+    @property
+    def action_dim(self) -> int:
+        return self.prefix_encoder.action_dim
+
+    def predict_prefix(self, anchor_latent: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        """Predict every action-prefix endpoint while retaining action gradients."""
+
+        return self.forward(anchor_latent, actions)
+
     def forward(self, anchor_latent: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         if anchor_latent.ndim < 2 or actions.ndim < 3:
             raise ValueError("anchor_latent and actions need at least one batch dimension")

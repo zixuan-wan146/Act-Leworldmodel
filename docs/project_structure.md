@@ -4,8 +4,8 @@
 configs/                    World-model, policy, controller, and training configs.
 controllers/baselines/      Evaluation-only search baselines such as CEM.
 controllers/learned/        Closed-loop GC-IDM and LARC controller wrappers.
-data/dataset.py             Offline visual-trajectory loading for world-model training.
-data/latent_policy_dataset.py  Frozen-latent caches for policy training.
+data/pusht_latent.py        Episode split, frame cache, and latent training datasets.
+data/action_transform.py    Raw-action normalization and action-block conversion.
 models/world_model/         Encoder composition and latent dynamics backbone.
 models/policies/            Trainable GC-IDM and LARC-Chunk networks.
 losses/world_model/         Dense prefix prediction and SIGReg.
@@ -34,15 +34,15 @@ third_party/                Pinned external source dependencies.
 an action sequence. It returns one predicted latent per action prefix and has
 no knowledge of goals, CEM, MPC, or policy state.
 
-The training path is:
+The Push-T training path is:
 
 ```text
-trajectory segment
-  -> shared visual encoder
-  -> anchor/future latent split
+released LeWM encoder/projector
+  -> one cached latent per dataset frame
+  -> episode-safe anchor/future latent clips
   -> causal action-prefix encoder
   -> parallel latent predictor
-  -> dense prefix MSE + SIGReg
+  -> dense prefix MSE
 ```
 
 ## Controller capabilities
@@ -62,5 +62,8 @@ LatentDynamics extends LatentEncoder
   requires `LatentDynamics` for differentiable action rollout.
 - CEM requires `LatentDynamics` online and remains isolated as a baseline.
 
-All closed-loop methods return `ActionCommand [B,K,A]`. GC-IDM uses `K=1`,
-LARC uses its configured chunk size, and CEM adapts the existing solver output.
+The reused visual representation was already trained with SIGReg. Fast-LeWM
+training freezes that representation and optimizes only prefix dynamics.
+
+GC-IDM emits one raw-action coordinate per step. LARC emits model action blocks
+and decodes them to raw environment actions only at the controller boundary.

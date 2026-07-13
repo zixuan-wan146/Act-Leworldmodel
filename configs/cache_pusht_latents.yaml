@@ -1,0 +1,15 @@
+dataset_path: ${oc.env:PUSHT_DATASET_PATH}
+source_checkpoint: ${oc.env:PUSHT_LEWM_CHECKPOINT}
+output_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
+
+seed: 3072
+train_fraction: 0.9
+frameskip: 5
+max_horizon: 5
+batch_size: 512
+device: cuda
+overwrite: false
+
+hydra:
+  run:
+    dir: ${output_dir}/hydra

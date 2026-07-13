@@ -64,15 +64,13 @@ class DensePrefixObjective(nn.Module):
         if sigreg_weight < 0:
             raise ValueError("sigreg_weight cannot be negative")
         self.sigreg_weight = sigreg_weight
-        self.sigreg = SIGReg(
-            knots=sigreg_knots, num_projections=sigreg_num_projections
-        )
+        self.sigreg = SIGReg(knots=sigreg_knots, num_projections=sigreg_num_projections)
 
     def forward(
         self,
         predictions: torch.Tensor,
         targets: torch.Tensor,
-        encoded_sequence: torch.Tensor,
+        encoded_sequence: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if predictions.shape != targets.shape:
             raise ValueError(
@@ -80,7 +78,12 @@ class DensePrefixObjective(nn.Module):
                 f"target shape {tuple(targets.shape)}"
             )
         prefix_loss = (predictions - targets).square().mean()
-        sigreg_loss = self.sigreg(encoded_sequence)
+        if self.sigreg_weight:
+            if encoded_sequence is None:
+                raise ValueError("encoded_sequence is required when SIGReg is enabled")
+            sigreg_loss = self.sigreg(encoded_sequence)
+        else:
+            sigreg_loss = prefix_loss.new_zeros(())
         total = prefix_loss + self.sigreg_weight * sigreg_loss
         return {
             "loss": total,

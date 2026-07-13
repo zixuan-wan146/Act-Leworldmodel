@@ -1,0 +1,20 @@
+latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/open_loop
+seed: 42
+device: cuda
+max_samples: 100000
+
+model:
+  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/model_config.yaml
+  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/fast_lewm_backbone_best.pt
+
+loader:
+  batch_size: 2048
+  num_workers: 6
+  persistent_workers: true
+  prefetch_factor: 3
+  pin_memory: true
+
+hydra:
+  run:
+    dir: ${output_dir}/hydra

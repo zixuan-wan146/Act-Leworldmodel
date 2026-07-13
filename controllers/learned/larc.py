@@ -25,8 +25,8 @@ class LARCController(Controller):
         self.policy = policy
         self.action_transform = action_transform or IdentityActionTransform()
         self.commit_steps = policy.chunk_size if commit_steps is None else commit_steps
-        if not 1 <= self.commit_steps <= policy.chunk_size:
-            raise ValueError("commit_steps must fall inside the policy chunk")
+        if self.commit_steps < 1:
+            raise ValueError("commit_steps must be positive")
         self.register_buffer("_goal_latent", None, persistent=False)
 
     def reset(self, goal_observation: torch.Tensor) -> None:
@@ -43,6 +43,8 @@ class LARCController(Controller):
             current = self.encoder.encode_observations(observation)
             model_actions = self.policy(current, self._goal_latent, steps_remaining)
             actions = self.action_transform.decode(model_actions)
+            if self.commit_steps > actions.size(-2):
+                raise ValueError("commit_steps exceeds the decoded environment-action chunk")
         return ActionCommand(
             actions=actions,
             replan_after=self.commit_steps,

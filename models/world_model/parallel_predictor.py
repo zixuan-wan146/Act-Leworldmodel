@@ -72,9 +72,7 @@ class ParallelLatentPredictor(nn.Module):
             for _ in range(depth)
         )
 
-    def forward(
-        self, anchor_latent: torch.Tensor, prefix_tokens: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, anchor_latent: torch.Tensor, prefix_tokens: torch.Tensor) -> torch.Tensor:
         if anchor_latent.ndim != 2:
             raise ValueError("anchor_latent must have shape [batch, latent_dim]")
         if prefix_tokens.ndim != 3:

@@ -1,4 +1,4 @@
-"""Train GC-IDM from a cache of frozen world-model latents."""
+"""Train GC-IDM on episode-separated Push-T frozen latents."""
 
 from __future__ import annotations
 
@@ -7,11 +7,13 @@ from pathlib import Path
 import hydra
 import lightning as pl
 import torch
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from data import LatentPolicyDataset
+from data import PushTLatentPolicyDataset, load_latent_metadata
 from train.policy_common import PolicyWeightsCheckpoint, configure_adamw, make_loaders
+from train.reproducibility import configure_reproducibility
 
 
 class GCIDMTrainingModule(pl.LightningModule):
@@ -34,6 +36,7 @@ class GCIDMTrainingModule(pl.LightningModule):
             on_step=stage == "train",
             on_epoch=True,
             sync_dist=True,
+            batch_size=predicted.size(0),
         )
         return losses["loss"]
 
@@ -45,30 +48,41 @@ class GCIDMTrainingModule(pl.LightningModule):
 
     def configure_optimizers(self):
         return configure_adamw(
-            self.policy.parameters(),
-            self.optimizer_config,
-            self.max_training_epochs,
+            self.policy.parameters(), self.optimizer_config, self.max_training_epochs
         )
 
 
 def run(cfg: DictConfig) -> None:
-    dataset = LatentPolicyDataset(
-        cfg.latent_cache,
-        required_keys=("current_latent", "goal_latent", "steps_remaining", "action"),
+    configure_reproducibility(cfg.seed)
+    metadata = load_latent_metadata(cfg.latent_cache_dir)
+    train_dataset = PushTLatentPolicyDataset(
+        cfg.latent_cache_dir,
+        "train",
+        method="gc_idm",
+        max_samples=cfg.data.max_train_samples,
+        sample_seed=cfg.seed,
     )
-    action_dim = dataset.tensors["action"].size(-1)
+    validation_dataset = PushTLatentPolicyDataset(
+        cfg.latent_cache_dir,
+        "validation",
+        method="gc_idm",
+        max_samples=cfg.data.max_validation_samples,
+        sample_seed=cfg.seed,
+    )
     with open_dict(cfg):
-        cfg.policy.action_dim = action_dim
+        cfg.policy.latent_dim = train_dataset.latent_dim
+        cfg.policy.action_dim = train_dataset.action_dim
+        cfg.policy.max_horizon = train_dataset.max_goal_offset
     policy = hydra.utils.instantiate(cfg.policy)
     objective = hydra.utils.instantiate(cfg.objective)
-    train_loader, validation_loader = make_loaders(dataset, cfg)
+    train_loader, validation_loader = make_loaders(train_dataset, validation_dataset, cfg)
     module = GCIDMTrainingModule(
         policy,
         objective,
         optimizer_config=cfg.optimizer,
         max_epochs=cfg.trainer.max_epochs,
     )
-    logger = None
+    logger = False
     if cfg.wandb.enabled:
         logger = WandbLogger(**cfg.wandb.config)
         logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
@@ -76,15 +90,33 @@ def run(cfg: DictConfig) -> None:
         output_dir=Path(cfg.output_dir),
         policy_config=cfg.policy,
         filename_prefix=cfg.output_model_name,
+        metadata={**metadata, "method": "gc_idm", "training_seed": int(cfg.seed)},
         interval=cfg.checkpoint_interval,
     )
-    trainer = pl.Trainer(
-        **cfg.trainer,
-        callbacks=[callback],
-        logger=logger,
-        enable_checkpointing=False,
+    lightning_checkpoint = ModelCheckpoint(
+        dirpath=Path(cfg.output_dir) / "lightning",
+        filename="epoch-{epoch:02d}",
+        monitor="validation/loss",
+        mode="min",
+        save_last=True,
+        save_top_k=1,
+        auto_insert_metric_name=False,
     )
-    trainer.fit(module, train_dataloaders=train_loader, val_dataloaders=validation_loader)
+    trainer_kwargs = OmegaConf.to_container(cfg.trainer, resolve=True)
+    trainer_kwargs.setdefault("default_root_dir", str(Path(cfg.output_dir)))
+    trainer_kwargs.setdefault("deterministic", True)
+    trainer = pl.Trainer(
+        **trainer_kwargs,
+        callbacks=[callback, lightning_checkpoint],
+        logger=logger,
+    )
+    resume_path = Path(cfg.output_dir) / "lightning" / "last.ckpt"
+    trainer.fit(
+        module,
+        train_dataloaders=train_loader,
+        val_dataloaders=validation_loader,
+        ckpt_path=str(resume_path) if resume_path.exists() else None,
+    )
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="train_gc_idm")

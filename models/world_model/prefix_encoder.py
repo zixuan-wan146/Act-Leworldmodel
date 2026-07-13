@@ -31,9 +31,7 @@ class SinusoidalPositionEncoding(nn.Module):
                 f"sequence length {tokens.size(1)} exceeds configured maximum "
                 f"{self.encoding.size(1)}"
             )
-        positions = self.encoding[:, : tokens.size(1)].to(
-            device=tokens.device, dtype=tokens.dtype
-        )
+        positions = self.encoding[:, : tokens.size(1)].to(device=tokens.device, dtype=tokens.dtype)
         return tokens + positions
 
 
@@ -118,9 +116,7 @@ class ActionPrefixEncoder(nn.Module):
             nn.SiLU(),
             nn.Linear(action_hidden_dim, token_dim),
         )
-        self.position_encoding = SinusoidalPositionEncoding(
-            token_dim, max_length=max_horizon + 1
-        )
+        self.position_encoding = SinusoidalPositionEncoding(token_dim, max_length=max_horizon + 1)
         self.blocks = nn.ModuleList(
             CausalTransformerBlock(token_dim, heads, head_dim, mlp_dim, dropout)
             for _ in range(depth)

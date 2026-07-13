@@ -1,18 +1,21 @@
-"""Train LARC-Chunk with frozen-world-model rollout consistency."""
+"""Train LARC with BC and differentiable frozen-world-model consistency."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import hydra
 import lightning as pl
 import torch
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from data import LatentPolicyDataset
+from data import PushTLatentPolicyDataset, load_latent_metadata
 from models.world_model import load_frozen_world_model
 from train.policy_common import PolicyWeightsCheckpoint, configure_adamw, make_loaders
+from train.reproducibility import configure_reproducibility
 
 
 class LARCTrainingModule(pl.LightningModule):
@@ -43,6 +46,8 @@ class LARCTrainingModule(pl.LightningModule):
             current_latent=batch["current_latent"],
             goal_latent=batch["goal_latent"],
             world_model=self.world_model,
+            steps_remaining=batch["steps_remaining"],
+            action_mask=batch["action_mask"],
         )
         scalar_losses = {
             f"{stage}/{name}": value
@@ -54,6 +59,7 @@ class LARCTrainingModule(pl.LightningModule):
             on_step=stage == "train",
             on_epoch=True,
             sync_dist=True,
+            batch_size=predicted_actions.size(0),
         )
         return losses["loss"]
 
@@ -65,40 +71,50 @@ class LARCTrainingModule(pl.LightningModule):
 
     def configure_optimizers(self):
         return configure_adamw(
-            self.policy.parameters(),
-            self.optimizer_config,
-            self.max_training_epochs,
+            self.policy.parameters(), self.optimizer_config, self.max_training_epochs
         )
 
 
 def run(cfg: DictConfig) -> None:
-    dataset = LatentPolicyDataset(
-        cfg.latent_cache,
-        required_keys=(
-            "current_latent",
-            "goal_latent",
-            "steps_remaining",
-            "action_chunk",
-        ),
+    configure_reproducibility(cfg.seed)
+    metadata = load_latent_metadata(cfg.latent_cache_dir)
+    train_dataset = PushTLatentPolicyDataset(
+        cfg.latent_cache_dir,
+        "train",
+        method="larc",
+        max_samples=cfg.data.max_train_samples,
+        sample_seed=cfg.seed,
     )
-    action_chunks = dataset.tensors["action_chunk"]
-    action_dim = action_chunks.size(-1)
-    chunk_size = action_chunks.size(-2)
+    validation_dataset = PushTLatentPolicyDataset(
+        cfg.latent_cache_dir,
+        "validation",
+        method="larc",
+        max_samples=cfg.data.max_validation_samples,
+        sample_seed=cfg.seed,
+    )
     with open_dict(cfg):
-        cfg.policy.action_dim = action_dim
-        cfg.policy.chunk_size = chunk_size
+        cfg.policy.latent_dim = train_dataset.latent_dim
+        cfg.policy.action_dim = train_dataset.action_dim
+        cfg.policy.chunk_size = train_dataset.chunk_size
+        cfg.policy.max_horizon = train_dataset.max_goal_offset
+        cfg.objective.frameskip = train_dataset.frameskip
     policy = hydra.utils.instantiate(cfg.policy)
     objective = hydra.utils.instantiate(cfg.objective)
-    world_model = load_frozen_world_model(
-        cfg.world_model.config_path,
-        cfg.world_model.weights_path,
-    )
-    if chunk_size > world_model.max_horizon:
+    world_model = load_frozen_world_model(cfg.world_model.config_path, cfg.world_model.weights_path)
+    world_metadata_path = Path(cfg.world_model.config_path).with_name("model_metadata.json")
+    world_metadata = json.loads(world_metadata_path.read_text())
+    if world_metadata["source_checkpoint_sha256"] != metadata["source_checkpoint_sha256"]:
+        raise ValueError("latent cache and frozen world model use different encoders")
+    if world_metadata["action_statistics"] != metadata["action_statistics"]:
+        raise ValueError("latent cache and frozen world model use different action statistics")
+    if train_dataset.chunk_size > world_model.max_horizon:
+        raise ValueError("LARC chunk exceeds the frozen world-model horizon")
+    if train_dataset.action_dim != world_model.backbone.dynamics.action_dim:
         raise ValueError(
-            f"LARC chunk size {chunk_size} exceeds world-model horizon "
-            f"{world_model.max_horizon}"
+            f"LARC block dimension {train_dataset.action_dim} does not match "
+            f"world-model action dimension {world_model.backbone.dynamics.action_dim}"
         )
-    train_loader, validation_loader = make_loaders(dataset, cfg)
+    train_loader, validation_loader = make_loaders(train_dataset, validation_dataset, cfg)
     module = LARCTrainingModule(
         policy,
         objective,
@@ -106,7 +122,7 @@ def run(cfg: DictConfig) -> None:
         optimizer_config=cfg.optimizer,
         max_epochs=cfg.trainer.max_epochs,
     )
-    logger = None
+    logger = False
     if cfg.wandb.enabled:
         logger = WandbLogger(**cfg.wandb.config)
         logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
@@ -114,15 +130,39 @@ def run(cfg: DictConfig) -> None:
         output_dir=Path(cfg.output_dir),
         policy_config=cfg.policy,
         filename_prefix=cfg.output_model_name,
+        metadata={
+            **metadata,
+            "method": "larc",
+            "training_seed": int(cfg.seed),
+            "world_model_config": str(Path(cfg.world_model.config_path).resolve()),
+            "world_model_weights": str(Path(cfg.world_model.weights_path).resolve()),
+        },
         interval=cfg.checkpoint_interval,
     )
-    trainer = pl.Trainer(
-        **cfg.trainer,
-        callbacks=[callback],
-        logger=logger,
-        enable_checkpointing=False,
+    lightning_checkpoint = ModelCheckpoint(
+        dirpath=Path(cfg.output_dir) / "lightning",
+        filename="epoch-{epoch:02d}",
+        monitor="validation/loss",
+        mode="min",
+        save_last=True,
+        save_top_k=1,
+        auto_insert_metric_name=False,
     )
-    trainer.fit(module, train_dataloaders=train_loader, val_dataloaders=validation_loader)
+    trainer_kwargs = OmegaConf.to_container(cfg.trainer, resolve=True)
+    trainer_kwargs.setdefault("default_root_dir", str(Path(cfg.output_dir)))
+    trainer_kwargs.setdefault("deterministic", True)
+    trainer = pl.Trainer(
+        **trainer_kwargs,
+        callbacks=[callback, lightning_checkpoint],
+        logger=logger,
+    )
+    resume_path = Path(cfg.output_dir) / "lightning" / "last.ckpt"
+    trainer.fit(
+        module,
+        train_dataloaders=train_loader,
+        val_dataloaders=validation_loader,
+        ckpt_path=str(resume_path) if resume_path.exists() else None,
+    )
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="train_larc")
