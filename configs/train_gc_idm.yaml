@@ -16,9 +16,8 @@ data:
   max_validation_samples: 100000
 
 loader:
-  batch_size: 700000
-  # One update per epoch on the current corpus; tune for the available GPU.
-  # 100 epochs preserve roughly the prior run's total sample exposure.
+  batch_size: ${task.training.gc_idm_batch_size}
+  # Task-specific value stays below the H50 train-anchor count for drop_last.
   num_workers: 1
   persistent_workers: true
   prefetch_factor: 1

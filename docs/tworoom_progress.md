@@ -24,6 +24,11 @@
   next state, and next frame for 64 deterministic random dataset transitions,
   in addition to fixed wall-collision goldens.
 - Runtime import tests block `stable_worldmodel`, `stable_pretraining`, `jepa`,
+- Single-step forward/backward smokes passed for Fast-LeWM, GC-IDM, and LARC.
+- Measured peak compute-process memory was about 21,870 MiB for Fast-LeWM,
+  11,768 MiB for GC-IDM, and 21,852 MiB for LARC. GC-IDM uses a task-specific
+  350,000 batch because the complete Two-Room H50 training view has only 379,531
+  anchors; a 700,000 drop-last batch produces no training batch.
   and the upstream `module` package.
 
 ## Remaining production work

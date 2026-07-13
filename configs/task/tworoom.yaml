@@ -8,6 +8,9 @@ state_key: proprio
 state_dim: 2
 action_dim: 2
 
+training:
+  gc_idm_batch_size: 350000
+
 source_model:
   config_path: configs/released_lewm/pusht.yaml
   weights_path: ${oc.env:TWOROOM_LEWM_WEIGHTS}

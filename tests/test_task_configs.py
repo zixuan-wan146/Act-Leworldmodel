@@ -16,10 +16,10 @@ CONFIG_NAMES = (
 
 
 @pytest.mark.parametrize(
-    ("task_name", "dataset_name", "state_key", "environment_target"),
+    ("task_name", "dataset_name", "state_key", "environment_target", "gc_batch_size"),
     (
-        ("pusht", "pusht.h5", "state", "eval.pusht_env.PushTEnv"),
-        ("tworoom", "tworoom.h5", "proprio", "eval.tworoom_env.TwoRoomEnv"),
+        ("pusht", "pusht.h5", "state", "eval.pusht_env.PushTEnv", 700000),
+        ("tworoom", "tworoom.h5", "proprio", "eval.tworoom_env.TwoRoomEnv", 350000),
     ),
 )
 def test_every_entrypoint_composes_from_one_task_config(
@@ -29,6 +29,7 @@ def test_every_entrypoint_composes_from_one_task_config(
     dataset_name,
     state_key,
     environment_target,
+    gc_batch_size,
 ):
     cache_root = tmp_path / "cache"
     run_root = tmp_path / "runs"
@@ -52,6 +53,7 @@ def test_every_entrypoint_composes_from_one_task_config(
         assert config["task"]["state_key"] == state_key
         assert config["task"]["dataset_path"].endswith(dataset_name)
         assert config["task"]["latent_cache_dir"] == str(cache_root / task_name / "frame_latents")
+    assert resolved["train_gc_idm"]["loader"]["batch_size"] == gc_batch_size
 
     closed_loop = resolved["eval_closed_loop"]
     assert closed_loop["environment"]["_target_"] == environment_target
