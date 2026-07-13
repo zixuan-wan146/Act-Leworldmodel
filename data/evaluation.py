@@ -1,4 +1,4 @@
-"""Minimal HDF5 access for the fixed Push-T evaluation protocol."""
+"""Minimal HDF5 access for fixed trajectory evaluation protocols."""
 
 from __future__ import annotations
 
@@ -28,17 +28,33 @@ def _take_rows(dataset: h5py.Dataset, rows: np.ndarray) -> np.ndarray:
     return dataset[sorted_rows][inverse]
 
 
-class PushTEvaluationDataset:
+class TrajectoryEvaluationDataset:
     """Read only the initial and goal rows required by evaluation."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        state_key: str,
+        state_dim: int,
+        action_dim: int,
+    ) -> None:
+        if not isinstance(state_key, str) or not state_key:
+            raise ValueError("state_key must be a non-empty string")
+        if isinstance(state_dim, bool) or not isinstance(state_dim, int) or state_dim < 1:
+            raise ValueError("state_dim must be a positive integer")
+        if isinstance(action_dim, bool) or not isinstance(action_dim, int) or action_dim < 1:
+            raise ValueError("action_dim must be a positive integer")
         self.path = Path(path)
+        self.state_key = state_key
+        self.state_dim = state_dim
+        self.action_dim = action_dim
         self._file = h5py.File(self.path, "r", swmr=True)
-        required = {"ep_len", "ep_offset", "pixels", "state", "action"}
+        required = {"ep_len", "ep_offset", "pixels", state_key, "action"}
         missing = required.difference(self._file.keys())
         if missing:
             self.close()
-            raise ValueError(f"Push-T dataset is missing columns: {sorted(missing)}")
+            raise ValueError(f"trajectory dataset is missing columns: {sorted(missing)}")
         self.lengths = self._file["ep_len"][:].astype(np.int64)
         self.offsets = self._file["ep_offset"][:].astype(np.int64)
         if self.lengths.ndim != 1 or self.offsets.shape != self.lengths.shape:
@@ -55,17 +71,20 @@ class PushTEvaluationDataset:
             raise ValueError("episode offsets are inconsistent with lengths")
         self.frame_count = int(self.lengths.sum())
         row_counts = {
-            name: int(self._file[name].shape[0]) for name in ("pixels", "state", "action")
+            name: int(self._file[name].shape[0]) for name in ("pixels", self.state_key, "action")
         }
         if any(count != self.frame_count for count in row_counts.values()):
             self.close()
             raise ValueError("episode metadata does not cover every evaluation column")
         if self._file["pixels"].ndim != 4 or self._file["pixels"].shape[-1] != 3:
             self.close()
-            raise ValueError("Push-T pixels must have shape [frames,height,width,3]")
-        if self._file["state"].shape[1:] != (7,) or self._file["action"].shape[1:] != (2,):
+            raise ValueError("pixels must have shape [frames,height,width,3]")
+        if self._file[self.state_key].shape[1:] != (self.state_dim,):
             self.close()
-            raise ValueError("Push-T state and action columns have incompatible shapes")
+            raise ValueError("state column has an incompatible shape")
+        if self._file["action"].shape[1:] != (self.action_dim,):
+            self.close()
+            raise ValueError("action column has an incompatible shape")
 
     def evaluation_rows(
         self,
@@ -91,8 +110,8 @@ class PushTEvaluationDataset:
         return {
             "pixels": _take_rows(self._file["pixels"], initial_rows),
             "goal_pixels": _take_rows(self._file["pixels"], goal_rows),
-            "state": _take_rows(self._file["state"], initial_rows),
-            "goal_state": _take_rows(self._file["state"], goal_rows),
+            "state": _take_rows(self._file[self.state_key], initial_rows),
+            "goal_state": _take_rows(self._file[self.state_key], goal_rows),
         }
 
     def action_array(self) -> np.ndarray:
@@ -103,7 +122,7 @@ class PushTEvaluationDataset:
             self._file.close()
             self._file = None
 
-    def __enter__(self) -> "PushTEvaluationDataset":
+    def __enter__(self) -> "TrajectoryEvaluationDataset":
         return self
 
     def __exit__(self, *exc) -> None:

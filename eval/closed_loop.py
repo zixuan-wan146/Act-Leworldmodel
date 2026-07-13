@@ -20,11 +20,11 @@ from controllers.learned import GCIDMController, LARCController
 from data import (
     ActionBlockTransform,
     ActionStatistics,
-    PushTEvaluationDataset,
+    TrajectoryEvaluationDataset,
     ZScoreActionTransform,
     calculate_action_statistics,
     load_latent_metadata,
-    preprocess_pusht_pixels,
+    preprocess_pixels,
 )
 from eval.protocol import create_or_load_manifest
 from eval.provenance import artifact_record, validate_artifact_records
@@ -195,7 +195,7 @@ class LearnedPushTPolicy:
         array = np.asarray(pixels)
         if array.ndim == 5:
             array = array[:, -1]
-        return preprocess_pusht_pixels(array, self.device)
+        return preprocess_pixels(array, self.device)
 
     def _reset_rows(self, rows: np.ndarray) -> None:
         if not rows.any():
@@ -394,7 +394,7 @@ def _load_learned_policy(cfg: DictConfig, method: str, cache_metadata: dict):
 def _load_cem_policy(
     cfg: DictConfig,
     cache_metadata: dict,
-    dataset: PushTEvaluationDataset,
+    dataset: TrajectoryEvaluationDataset,
 ):
     model, artifact_metadata = load_released_lewm(cfg.cem.config_path, cfg.cem.weights_path)
     if artifact_metadata["source_checkpoint_sha256"] != cache_metadata["source_checkpoint_sha256"]:
@@ -501,7 +501,12 @@ def run(cfg: DictConfig) -> dict:
     )
     manifest_path = Path(cfg.protocol.manifest_path).resolve()
     manifest_sha256 = file_sha256(manifest_path)
-    with PushTEvaluationDataset(cfg.dataset_path) as dataset:
+    with TrajectoryEvaluationDataset(
+        cfg.dataset_path,
+        state_key=cfg.dataset_state_key,
+        state_dim=cfg.dataset_state_dim,
+        action_dim=cfg.dataset_action_dim,
+    ) as dataset:
         rows = dataset.evaluation_rows(
             manifest["episode_indices"],
             manifest["start_steps"],

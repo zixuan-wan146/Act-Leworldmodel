@@ -6,34 +6,34 @@ from data.action_transform import (
     IdentityActionTransform,
     ZScoreActionTransform,
 )
-from data.pusht_latent import (
+from data.latent import (
     ActionStatistics,
-    PushTLatentDynamicsDataset,
-    PushTLatentPolicyDataset,
+    LatentDynamicsDataset,
+    LatentPolicyDataset,
     build_frame_latent_cache,
     calculate_action_statistics,
     collate_latent_batch,
     load_latent_metadata,
-    preprocess_pusht_pixels,
+    preprocess_pixels,
     split_episode_ids,
     with_horizon_view,
 )
-from data.pusht_eval import PushTEvaluationDataset
+from data.evaluation import TrajectoryEvaluationDataset
 
 __all__ = [
     "ActionBlockTransform",
     "ActionStatistics",
     "ActionTransform",
     "IdentityActionTransform",
-    "PushTLatentDynamicsDataset",
-    "PushTLatentPolicyDataset",
-    "PushTEvaluationDataset",
+    "LatentDynamicsDataset",
+    "LatentPolicyDataset",
+    "TrajectoryEvaluationDataset",
     "ZScoreActionTransform",
     "build_frame_latent_cache",
     "calculate_action_statistics",
     "collate_latent_batch",
     "load_latent_metadata",
-    "preprocess_pusht_pixels",
+    "preprocess_pixels",
     "split_episode_ids",
     "with_horizon_view",
 ]

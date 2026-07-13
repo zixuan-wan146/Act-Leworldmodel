@@ -1,4 +1,4 @@
-"""Episode-safe Push-T latent caches and training datasets."""
+"""Episode-safe latent caches and training datasets."""
 
 from __future__ import annotations
 
@@ -189,7 +189,7 @@ def _rows_for_episodes(
     return mask
 
 
-def preprocess_pusht_pixels(
+def preprocess_pixels(
     pixels: np.ndarray | torch.Tensor, device: torch.device | str
 ) -> torch.Tensor:
     """Apply the exact ImageNet preprocessing used by released LeWM weights."""
@@ -276,7 +276,7 @@ def build_frame_latent_cache(
         actions = dataset["action"][:].astype(np.float32)
         action_statistics = calculate_action_statistics(actions, train_rows)
 
-        sample_pixels = preprocess_pusht_pixels(dataset["pixels"][:1], target_device)
+        sample_pixels = preprocess_pixels(dataset["pixels"][:1], target_device)
         with torch.inference_mode():
             encoded = encoder(sample_pixels, interpolate_pos_encoding=True)
             latent_dim = int(projector(encoded.last_hidden_state[:, 0]).size(-1))
@@ -292,7 +292,7 @@ def build_frame_latent_cache(
         with torch.inference_mode():
             for start in range(0, frame_count, batch_size):
                 end = min(start + batch_size, frame_count)
-                pixels = preprocess_pusht_pixels(dataset["pixels"][start:end], target_device)
+                pixels = preprocess_pixels(dataset["pixels"][start:end], target_device)
                 with torch.autocast(
                     device_type=target_device.type,
                     dtype=torch.bfloat16,
@@ -382,7 +382,7 @@ def collate_latent_batch(
     return batch
 
 
-class _PushTLatentDataset(Dataset):
+class _LatentDataset(Dataset):
     def __init__(
         self,
         cache_dir: str | Path,
@@ -407,9 +407,9 @@ class _PushTLatentDataset(Dataset):
         dataset_path = Path(self.metadata["dataset_path"])
         stat = dataset_path.stat()
         if stat.st_size != self.metadata["dataset_size"]:
-            raise ValueError("source Push-T dataset size changed after cache creation")
+            raise ValueError("source dataset size changed after cache creation")
         if stat.st_mtime_ns != self.metadata["dataset_mtime_ns"]:
-            raise ValueError("source Push-T dataset timestamp changed after cache creation")
+            raise ValueError("source dataset timestamp changed after cache creation")
         with h5py.File(dataset_path, "r", swmr=True) as dataset:
             self.actions = dataset["action"][:].astype(np.float32)
         self.lengths = np.asarray(self.metadata["episode_lengths"], dtype=np.int64)
@@ -446,7 +446,7 @@ class _PushTLatentDataset(Dataset):
         return torch.from_numpy(np.asarray(normalized, dtype=np.float32))
 
 
-class PushTLatentDynamicsDataset(_PushTLatentDataset):
+class LatentDynamicsDataset(_LatentDataset):
     """Dense prefix targets backed by one latent per raw dataset frame."""
 
     def __init__(
@@ -508,7 +508,7 @@ class PushTLatentDynamicsDataset(_PushTLatentDataset):
         }
 
 
-class PushTLatentPolicyDataset(_PushTLatentDataset):
+class LatentPolicyDataset(_LatentDataset):
     """Goal/action pairs with deterministic horizon coverage per episode split."""
 
     def __init__(

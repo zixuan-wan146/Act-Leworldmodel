@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from data import PushTLatentDynamicsDataset, collate_latent_batch
+from data import LatentDynamicsDataset, collate_latent_batch
 from eval.provenance import artifact_record, validate_artifact_records
 from models.world_model import load_frozen_world_model
 from train.reproducibility import configure_reproducibility, make_generator
@@ -31,7 +31,7 @@ def run(cfg: DictConfig) -> dict:
         "world_model_weights": artifact_record(cfg.model.weights_path),
         "world_model_metadata": artifact_record(world_config.with_name("model_metadata.json")),
     }
-    dataset = PushTLatentDynamicsDataset(
+    dataset = LatentDynamicsDataset(
         cfg.latent_cache_dir,
         "validation",
         frameskip=cfg.data.frameskip,

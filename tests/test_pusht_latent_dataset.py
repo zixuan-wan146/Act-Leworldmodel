@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 import torch
 
-from data.pusht_latent import (
-    PushTLatentDynamicsDataset,
-    PushTLatentPolicyDataset,
+from data.latent import (
+    LatentDynamicsDataset,
+    LatentPolicyDataset,
     build_frame_latent_cache,
     collate_latent_batch,
     split_episode_ids,
@@ -61,7 +61,7 @@ def test_episode_split_is_deterministic_and_disjoint():
 
 def test_dense_dynamics_indices_and_action_blocks(tmp_path):
     latents, actions = _make_cache(tmp_path)
-    dataset = PushTLatentDynamicsDataset(tmp_path, "train", frameskip=5, max_horizon=5)
+    dataset = LatentDynamicsDataset(tmp_path, "train", frameskip=5, max_horizon=5)
     assert len(dataset) == 6
     sample = dataset[0]
     torch.testing.assert_close(sample["anchor_latent"], torch.from_numpy(latents[0]).float())
@@ -82,7 +82,7 @@ def test_dense_dynamics_indices_and_action_blocks(tmp_path):
 
 def test_horizon_view_is_not_stored_in_frame_cache_metadata(tmp_path):
     _, actions = _make_cache(tmp_path)
-    dataset = PushTLatentDynamicsDataset(tmp_path, "train", frameskip=5, max_horizon=6)
+    dataset = LatentDynamicsDataset(tmp_path, "train", frameskip=5, max_horizon=6)
     assert len(dataset) == 1
     torch.testing.assert_close(
         dataset[0]["action_blocks"], torch.from_numpy(actions[:30]).reshape(6, 10)
@@ -91,7 +91,7 @@ def test_horizon_view_is_not_stored_in_frame_cache_metadata(tmp_path):
 
 def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
     latents, _ = _make_cache(tmp_path)
-    larc = PushTLatentPolicyDataset(
+    larc = LatentPolicyDataset(
         tmp_path,
         "validation",
         method="larc",
@@ -109,7 +109,7 @@ def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
     for key in sample:
         torch.testing.assert_close(larc_batched[key][0], sample[key])
 
-    gc_idm = PushTLatentPolicyDataset(
+    gc_idm = LatentPolicyDataset(
         tmp_path,
         "train",
         method="gc_idm",
@@ -132,7 +132,7 @@ def test_policy_goal_offsets_are_deterministic_and_strictly_balanced(tmp_path):
         "larc": np.arange(5, 51, 5),
     }
     for method, expected_offsets in expected.items():
-        first = PushTLatentPolicyDataset(
+        first = LatentPolicyDataset(
             tmp_path,
             "train",
             method=method,
@@ -140,7 +140,7 @@ def test_policy_goal_offsets_are_deterministic_and_strictly_balanced(tmp_path):
             max_horizon=10,
             sample_seed=3072,
         )
-        second = PushTLatentPolicyDataset(
+        second = LatentPolicyDataset(
             tmp_path,
             "train",
             method=method,
@@ -200,7 +200,7 @@ def test_existing_cache_reuses_latents_without_reencoding(tmp_path, monkeypatch)
     def reject_encoder_load(*args, **kwargs):
         raise AssertionError("cache reuse must not construct the encoder")
 
-    monkeypatch.setattr("data.pusht_latent.load_released_lewm", reject_encoder_load)
+    monkeypatch.setattr("data.latent.load_released_lewm", reject_encoder_load)
     metadata = build_frame_latent_cache(
         dataset_path=tmp_path / "pusht.h5",
         source_config=config_path,

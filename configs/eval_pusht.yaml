@@ -2,6 +2,9 @@ method: cem
 code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 device: cuda
 dataset_path: ${oc.env:PUSHT_DATASET_PATH}
+dataset_state_key: state
+dataset_state_dim: 7
+dataset_action_dim: 2
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
 experiment_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50
 output_dir: ${experiment_dir}/eval/offset_${protocol.goal_offset}

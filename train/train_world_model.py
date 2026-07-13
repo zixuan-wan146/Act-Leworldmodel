@@ -14,7 +14,7 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from data import (
-    PushTLatentDynamicsDataset,
+    LatentDynamicsDataset,
     collate_latent_batch,
     load_latent_metadata,
     with_horizon_view,
@@ -178,7 +178,7 @@ def run(cfg: DictConfig) -> None:
         cfg.model.dynamics.prefix_encoder.latent_dim = metadata["latent_dim"]
         cfg.model.dynamics.predictor.latent_dim = metadata["latent_dim"]
 
-    train_dataset = PushTLatentDynamicsDataset(
+    train_dataset = LatentDynamicsDataset(
         cfg.latent_cache_dir,
         "train",
         frameskip=view_metadata["frameskip"],
@@ -186,7 +186,7 @@ def run(cfg: DictConfig) -> None:
         max_samples=cfg.data.max_train_samples,
         sample_seed=cfg.seed,
     )
-    validation_dataset = PushTLatentDynamicsDataset(
+    validation_dataset = LatentDynamicsDataset(
         cfg.latent_cache_dir,
         "validation",
         frameskip=view_metadata["frameskip"],

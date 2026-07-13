@@ -4,7 +4,7 @@
 configs/                    World-model, policy, training, and evaluation configs.
 controllers/baselines/      Evaluation-only search baselines such as CEM.
 controllers/learned/        Closed-loop GC-IDM and LARC controller wrappers.
-data/pusht_latent.py        Episode split, frame cache, and latent training datasets.
+data/latent.py              Episode split, frame cache, and latent training datasets.
 data/action_transform.py    Raw-action normalization and action-block conversion.
 models/world_model/         Encoder composition and latent dynamics backbone.
 models/policies/            Trainable GC-IDM and LARC-Chunk networks.

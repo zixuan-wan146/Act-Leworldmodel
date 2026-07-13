@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from controllers.base import ActionCommand
-from data.pusht_eval import PushTEvaluationDataset
+from data.evaluation import TrajectoryEvaluationDataset
 from eval.closed_loop import (
     FRAME_LINEAGE_FIELDS,
     HORIZON_VIEW_FIELDS,
@@ -40,7 +40,12 @@ def test_compressed_evaluation_dataset_reads_arbitrary_episode_order(tmp_path):
         dataset.create_dataset("state", data=states)
         dataset.create_dataset("action", data=actions)
 
-    with PushTEvaluationDataset(path) as dataset:
+    with TrajectoryEvaluationDataset(
+        path,
+        state_key="state",
+        state_dim=7,
+        action_dim=2,
+    ) as dataset:
         rows = dataset.evaluation_rows([1, 0], [0, 0], goal_offset=2)
         np.testing.assert_array_equal(rows["pixels"], pixels[[3, 0]])
         np.testing.assert_array_equal(rows["goal_pixels"], pixels[[5, 2]])

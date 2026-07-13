@@ -13,7 +13,7 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from data import (
-    PushTLatentPolicyDataset,
+    LatentPolicyDataset,
     load_latent_metadata,
     with_horizon_view,
 )
@@ -91,7 +91,7 @@ def run(cfg: DictConfig) -> None:
         frameskip=int(cfg.data.frameskip),
         max_horizon=int(cfg.data.max_horizon),
     )
-    train_dataset = PushTLatentPolicyDataset(
+    train_dataset = LatentPolicyDataset(
         cfg.latent_cache_dir,
         "train",
         method="larc",
@@ -100,7 +100,7 @@ def run(cfg: DictConfig) -> None:
         max_samples=cfg.data.max_train_samples,
         sample_seed=cfg.seed,
     )
-    validation_dataset = PushTLatentPolicyDataset(
+    validation_dataset = LatentPolicyDataset(
         cfg.latent_cache_dir,
         "validation",
         method="larc",
