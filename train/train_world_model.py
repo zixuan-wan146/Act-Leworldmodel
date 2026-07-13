@@ -21,6 +21,7 @@ from data import (
 )
 from models.world_model import initialize_representation_from_lewm
 from models.world_model.artifacts import RELEASED_LEWM_KIND, load_portable_artifact
+from train.artifacts import finalize_training_artifacts
 from train.reproducibility import (
     configure_reproducibility,
     make_generator,
@@ -85,16 +86,12 @@ class PortableWorldModelCheckpoint(Callback):
         model_config: DictConfig,
         metadata: dict,
         filename_prefix: str,
-        interval: int = 1,
     ) -> None:
         super().__init__()
-        if interval < 1:
-            raise ValueError("checkpoint interval must be positive")
         self.output_dir = Path(output_dir)
         self.model_config = OmegaConf.create(OmegaConf.to_container(model_config, resolve=True))
         self.metadata = metadata
         self.filename_prefix = filename_prefix
-        self.interval = interval
         self.best_loss = float("inf")
 
     def _save(self, module, suffix: str) -> None:
@@ -131,14 +128,6 @@ class PortableWorldModelCheckpoint(Callback):
 
     def load_state_dict(self, state_dict: dict) -> None:
         self.best_loss = float(state_dict.get("best_loss", float("inf")))
-
-    def on_train_epoch_end(self, trainer, pl_module) -> None:
-        epoch = trainer.current_epoch + 1
-        if not trainer.is_global_zero:
-            return
-        if epoch % self.interval == 0 or epoch == trainer.max_epochs:
-            self._save(pl_module, f"epoch_{epoch}")
-        self._save(pl_module, "last")
 
 
 def _make_loader(dataset, cfg: DictConfig, *, shuffle: bool, seed: int):
@@ -241,7 +230,6 @@ def run(cfg: DictConfig) -> None:
         model_config=cfg.model,
         metadata=training_metadata,
         filename_prefix=cfg.output_model_name,
-        interval=cfg.checkpoint_interval,
     )
     lightning_checkpoint = ModelCheckpoint(
         dirpath=output_dir / "lightning",
@@ -267,6 +255,8 @@ def run(cfg: DictConfig) -> None:
         val_dataloaders=validation_loader,
         ckpt_path=str(resume_path) if resume_path.exists() else None,
     )
+    if trainer.is_global_zero:
+        finalize_training_artifacts(output_dir, str(cfg.output_model_name))
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="train_world_model")

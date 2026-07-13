@@ -22,19 +22,15 @@ class PolicyWeightsCheckpoint(Callback):
         policy_config: DictConfig,
         filename_prefix: str,
         metadata: dict,
-        interval: int = 1,
     ) -> None:
         super().__init__()
-        if interval < 1:
-            raise ValueError("checkpoint interval must be positive")
         self.output_dir = Path(output_dir)
         self.policy_config = OmegaConf.create(OmegaConf.to_container(policy_config, resolve=True))
         self.filename_prefix = filename_prefix
         self.metadata = metadata
-        self.interval = interval
         self.best_loss = float("inf")
 
-    def _save(self, trainer, pl_module, suffix: str) -> None:
+    def _save(self, pl_module, suffix: str) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         destination = self.output_dir / f"{self.filename_prefix}_{suffix}.pt"
         temporary = destination.with_suffix(".pt.tmp")
@@ -64,21 +60,13 @@ class PolicyWeightsCheckpoint(Callback):
         )
         if improved:
             self.best_loss = value
-            self._save(trainer, pl_module, "best")
+            self._save(pl_module, "best")
 
     def state_dict(self) -> dict:
         return {"best_loss": self.best_loss}
 
     def load_state_dict(self, state_dict: dict) -> None:
         self.best_loss = float(state_dict.get("best_loss", float("inf")))
-
-    def on_train_epoch_end(self, trainer, pl_module) -> None:
-        epoch = trainer.current_epoch + 1
-        if not trainer.is_global_zero:
-            return
-        if epoch % self.interval == 0 or epoch == trainer.max_epochs:
-            self._save(trainer, pl_module, f"epoch_{epoch}")
-        self._save(trainer, pl_module, "last")
 
 
 def configure_adamw(

@@ -16,6 +16,7 @@ from data import (
     load_latent_metadata,
     with_horizon_view,
 )
+from train.artifacts import finalize_training_artifacts
 from train.policy_common import PolicyWeightsCheckpoint, configure_adamw, make_loaders
 from train.reproducibility import configure_reproducibility, reject_external_lightning_callbacks
 from utils import validate_code_revision
@@ -114,7 +115,6 @@ def run(cfg: DictConfig) -> None:
         policy_config=cfg.policy,
         filename_prefix=cfg.output_model_name,
         metadata=training_metadata,
-        interval=cfg.checkpoint_interval,
     )
     lightning_checkpoint = ModelCheckpoint(
         dirpath=Path(cfg.output_dir) / "lightning",
@@ -140,6 +140,8 @@ def run(cfg: DictConfig) -> None:
         val_dataloaders=validation_loader,
         ckpt_path=str(resume_path) if resume_path.exists() else None,
     )
+    if trainer.is_global_zero:
+        finalize_training_artifacts(cfg.output_dir, str(cfg.output_model_name))
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="train_gc_idm")

@@ -7,7 +7,6 @@ latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
 output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/gc_idm
 output_model_name: gc_idm
 seed: 3072
-checkpoint_interval: 5
 
 data:
   frameskip: 5

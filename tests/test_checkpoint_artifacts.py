@@ -1,13 +1,18 @@
 import pickle
+from types import SimpleNamespace
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from models.world_model.artifacts import (
     RELEASED_LEWM_KIND,
     load_portable_artifact,
     load_tensor_state_dict,
 )
+from train.artifacts import finalize_training_artifacts
+from train.policy_common import PolicyWeightsCheckpoint
+from train.train_world_model import PortableWorldModelCheckpoint
 
 
 class LegacyObjectCheckpoint(torch.nn.Module):
@@ -53,3 +58,60 @@ def test_tensor_loader_rejects_legacy_python_objects(tmp_path):
 
     with pytest.raises(pickle.UnpicklingError):
         load_tensor_state_dict(path)
+
+
+def test_training_exports_keep_only_best_tensor_artifact(tmp_path):
+    trainer = SimpleNamespace(
+        sanity_checking=False,
+        callback_metrics={"validation/loss": torch.tensor(1.0)},
+        is_global_zero=True,
+        current_epoch=0,
+    )
+    world_module = SimpleNamespace(model=torch.nn.Linear(2, 2))
+    world = PortableWorldModelCheckpoint(
+        output_dir=tmp_path / "world",
+        model_config=OmegaConf.create({"_target_": "torch.nn.Linear"}),
+        metadata={"kind": "world"},
+        filename_prefix="world",
+    )
+    policy_module = SimpleNamespace(policy=torch.nn.Linear(2, 2))
+    policy = PolicyWeightsCheckpoint(
+        output_dir=tmp_path / "policy",
+        policy_config=OmegaConf.create({"_target_": "torch.nn.Linear"}),
+        filename_prefix="policy",
+        metadata={"kind": "policy"},
+    )
+
+    world.on_validation_epoch_end(trainer, world_module)
+    policy.on_validation_epoch_end(trainer, policy_module)
+
+    assert [path.name for path in (tmp_path / "world").glob("*.pt")] == ["world_best.pt"]
+    assert [path.name for path in (tmp_path / "policy").glob("*.pt")] == ["policy_best.pt"]
+    assert all(
+        isinstance(value, torch.Tensor)
+        for value in torch.load(tmp_path / "world" / "world_best.pt", weights_only=True).values()
+    )
+    assert all(
+        isinstance(value, torch.Tensor)
+        for value in torch.load(tmp_path / "policy" / "policy_best.pt", weights_only=True).values()
+    )
+
+    trainer.callback_metrics["validation/loss"] = torch.tensor(2.0)
+    trainer.current_epoch = 1
+    world.on_validation_epoch_end(trainer, world_module)
+    policy.on_validation_epoch_end(trainer, policy_module)
+
+    assert [path.name for path in (tmp_path / "world").glob("*.pt")] == ["world_best.pt"]
+    assert [path.name for path in (tmp_path / "policy").glob("*.pt")] == ["policy_best.pt"]
+
+    for directory, prefix in ((tmp_path / "world", "world"), (tmp_path / "policy", "policy")):
+        (directory / f"{prefix}_epoch_1.pt").write_bytes(b"obsolete")
+        (directory / f"{prefix}_last.pt").write_bytes(b"obsolete")
+        recovery = directory / "lightning"
+        recovery.mkdir()
+        (recovery / "last.ckpt").write_bytes(b"resume")
+
+        finalize_training_artifacts(directory, prefix)
+
+        assert [path.name for path in directory.glob("*.pt")] == [f"{prefix}_best.pt"]
+        assert not recovery.exists()

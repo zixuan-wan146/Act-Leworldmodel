@@ -7,7 +7,6 @@ latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
 output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/larc
 output_model_name: larc_chunk
 seed: 3072
-checkpoint_interval: 5
 
 world_model:
   config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/model_config.yaml
