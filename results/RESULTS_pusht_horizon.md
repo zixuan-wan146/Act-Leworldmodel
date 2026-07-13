@@ -51,7 +51,7 @@ Held-out validation clips: `100000`.
 | 45 | 0.329785 | 1.814196 |
 | 50 | 0.368971 | 1.843363 |
 
-![Fast-LeWM open-loop curve](open_loop_curve.png)
+![Fast-LeWM open-loop curve](pusht_open_loop_curve.png)
 
 ## Evaluation provenance
 

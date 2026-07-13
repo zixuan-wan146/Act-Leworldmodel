@@ -124,6 +124,7 @@ run directory is 77 MB.
 
 ## Next phase
 
-Two-Room is next. It still requires a complete project-owned data reader/cache,
-portable checkpoint conversion, environment/evaluation path, training configs,
-tests, production training, and final report; no stub is counted as progress.
+The separate Two-Room production protocol has since completed; its outcome is in
+`docs/tworoom_horizon_stress_outcome.md`. This document remains the frozen Push-T
+record. Any later architecture or optimizer-budget ablation must use separate
+checkpoints, revisions, and reports rather than changing this result in place.

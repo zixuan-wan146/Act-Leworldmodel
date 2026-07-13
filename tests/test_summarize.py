@@ -167,7 +167,8 @@ def test_summary_includes_all_offsets_and_open_loop_results(tmp_path):
     assert "Fast-LeWM open-loop validation" in report
     assert "Paired success differences" in report
     assert "0.010000" in report
-    assert (output_dir / "open_loop_curve.png").read_bytes() == b"figure"
+    assert "![Fast-LeWM open-loop curve](pusht_open_loop_curve.png)" in report
+    assert (output_dir / "pusht_open_loop_curve.png").read_bytes() == b"figure"
     assert (output_dir / "pusht_horizon_success.png").is_file()
     assert (output_dir / "pusht_horizon_time.png").is_file()
 
@@ -185,6 +186,7 @@ def test_summary_uses_resolved_task_name_and_label(tmp_path):
     assert destination.read_text().startswith("# Two-Room horizon-stress results")
     assert (output_dir / "tworoom_horizon_success.png").is_file()
     assert (output_dir / "tworoom_horizon_time.png").is_file()
+    assert (output_dir / "tworoom_open_loop_curve.png").read_bytes() == b"figure"
 
 
 def test_summary_rejects_inconsistent_success_rate(tmp_path):

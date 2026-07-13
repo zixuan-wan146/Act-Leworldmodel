@@ -8,13 +8,12 @@ temporal-horizon stress tests on Push-T and Two-Room:
 - **LARC** predicts action blocks with behavior cloning plus frozen-world-model
   rollout consistency, then replans after one five-action block.
 
-One H50 Fast-LeWM, one H50 GC-IDM, and one H50 LARC checkpoint were trained with
-seed `3072`. The same learned checkpoints were evaluated at goal offsets
-`25`, `35`, and `50` on 50 paired held-out tasks with evaluation seed
-`42`. The frozen protocol is in
-[docs/pusht_horizon_stress_test.md](docs/pusht_horizon_stress_test.md).
+Each task uses one H50 Fast-LeWM, one H50 GC-IDM, and one H50 LARC checkpoint
+trained with seed `3072`. The same task-specific learned checkpoints are reused
+at goal offsets `25`, `35`, and `50` on 50 paired held-out tasks with evaluation
+seed `42`.
 
-The production run is complete:
+The Push-T production run is complete:
 
 | Goal offset | CEM | GC-IDM | LARC |
 |---:|---:|---:|---:|
@@ -22,16 +21,27 @@ The production run is complete:
 | 35 | 14% | 28% | 82% |
 | 50 | 8% | 12% | 50% |
 
-See the [full result report](results/RESULTS_pusht_horizon.md) and
-[experiment outcome](docs/horizon_stress_outcome.md) for paired differences,
-Wilson intervals, timing, open-loop error, provenance, and limitations. This is
-a temporal-offset goal-conditioned benchmark, not classic fixed-target Push-T.
+See the [Push-T result report](results/RESULTS_pusht_horizon.md),
+[outcome](docs/horizon_stress_outcome.md), and
+[protocol](docs/pusht_horizon_stress_test.md).
 
-The Two-Room implementation now shares the same data, training, open-loop, and
-closed-loop pipeline while using its own released representation, cache, paired
-manifest, and project-owned environment. Its production cache, training, and
-evaluation have not yet been run. The frozen protocol is in
-[docs/tworoom_horizon_stress_test.md](docs/tworoom_horizon_stress_test.md).
+The Two-Room production run is also complete:
+
+| Goal offset | CEM | GC-IDM | LARC |
+|---:|---:|---:|---:|
+| 25 | 82% | 98% | 100% |
+| 35 | 52% | 94% | 96% |
+| 50 | 38% | 84% | 96% |
+
+See the [Two-Room result report](results/RESULTS_tworoom_horizon.md),
+[outcome](docs/tworoom_horizon_stress_outcome.md), and
+[protocol](docs/tworoom_horizon_stress_test.md). The implementation shares the
+task-configured pipeline while using its own released representation, cache,
+paired manifest, and project-owned environment.
+
+Both experiments are temporal-offset goal-conditioned benchmarks, not classic
+fixed-target full-episode benchmarks. The reports contain paired differences,
+Wilson intervals, timing, open-loop error, provenance, and limitations.
 
 ## Runtime boundary
 
@@ -202,15 +212,19 @@ rendering and collisions, task-config composition, paired manifest integrity,
 timing fields, artifact hashes, cross-offset result consistency, and
 reference-package import blocking.
 
-The final versioned report is
-`results/RESULTS_pusht_horizon.md`, with the interpretation in
-`docs/horizon_stress_outcome.md`. Minimal raw artifacts remain under
-`$ACT_LEWM_RUN_ROOT/pusht/horizon_h50/`.
+The final versioned reports are:
 
-## Current next phase
+- `results/RESULTS_pusht_horizon.md`, interpreted in
+  `docs/horizon_stress_outcome.md`;
+- `results/RESULTS_tworoom_horizon.md`, interpreted in
+  `docs/tworoom_horizon_stress_outcome.md`.
 
-Push-T is complete. Two-Room protocol and asset audits, the shared task-configured
-pipeline, tensor-only artifact publication, and the project environment are
-implemented. Production cache construction, model training, evaluation, result
-generation, and final artifact cleanup remain. Current status is tracked in
-[docs/tworoom_progress.md](docs/tworoom_progress.md).
+Minimal raw artifacts remain under each task's
+`$ACT_LEWM_RUN_ROOT/<task>/horizon_h50/` directory.
+
+## Current state
+
+The frozen Push-T and Two-Room production protocols are complete. The Two-Room
+completion record is in [docs/tworoom_progress.md](docs/tworoom_progress.md).
+Architecture and optimizer-budget ablations are outside these frozen production
+runs and must use separate checkpoints, revisions, and reports.

@@ -165,9 +165,9 @@ See `results/RESULTS_pusht_horizon.md` and
 `docs/horizon_stress_outcome.md` for confidence intervals, paired differences,
 timing, open-loop prefixes, provenance, limitations, and interpretation.
 
-## Queued next phase
+## Subsequent work
 
-Push-T is complete. Two-Room is next and has not started. It requires complete
-project-owned dataset processing, latent caching, model training, closed-loop
-evaluation, and result reporting. The available external `tworoom.h5` is an
-input artifact only; no placeholder is counted as implementation.
+The separate Two-Room production protocol has since completed. Its progress,
+formal result, and interpretation are recorded in `docs/tworoom_progress.md`,
+`results/RESULTS_tworoom_horizon.md`, and
+`docs/tworoom_horizon_stress_outcome.md`.

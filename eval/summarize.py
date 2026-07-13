@@ -473,7 +473,8 @@ def summarize(
         task_config=task,
     )
     _plot_results(results, goal_offsets, output_dir, task["name"])
-    shutil.copy2(open_loop_dir / "open_loop_curve.png", output_dir / "open_loop_curve.png")
+    open_loop_figure_name = f"{task['name']}_open_loop_curve.png"
+    shutil.copy2(open_loop_dir / "open_loop_curve.png", output_dir / open_loop_figure_name)
 
     rows = [
         f"# {task['label']} horizon-stress results",
@@ -558,7 +559,7 @@ def summarize(
     rows.extend(
         [
             "",
-            "![Fast-LeWM open-loop curve](open_loop_curve.png)",
+            f"![Fast-LeWM open-loop curve]({open_loop_figure_name})",
             "",
             "## Evaluation provenance",
             "",
