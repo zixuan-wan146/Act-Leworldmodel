@@ -4,8 +4,8 @@ import h5py
 import numpy as np
 import pytest
 
+from eval.closed_loop import LINEAGE_FIELDS, _validate_learned_artifacts
 from eval.protocol import create_or_load_manifest
-from eval.closed_loop import _validate_learned_artifacts
 
 
 def test_manifest_uses_only_validation_episodes_and_is_reused(tmp_path):
@@ -62,20 +62,24 @@ def test_manifest_uses_only_validation_episodes_and_is_reused(tmp_path):
 
 
 def test_learned_artifact_validation_rejects_mixed_action_protocols():
-    common = {
-        "source_checkpoint_sha256": "encoder",
-        "seed": 3072,
-        "train_fraction": 0.9,
-        "frameskip": 5,
-        "max_horizon": 5,
-        "max_goal_offset": 25,
-        "latent_dim": 192,
-        "action_statistics": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
-        "training_seed": 3072,
-    }
+    common = {field: 0 for field in LINEAGE_FIELDS}
+    common.update(
+        {
+            "source_checkpoint_sha256": "encoder",
+            "seed": 3072,
+            "train_fraction": 0.9,
+            "frameskip": 5,
+            "max_horizon": 5,
+            "max_goal_offset": 25,
+            "latent_dim": 192,
+            "action_statistics": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
+            "training_seed": 3072,
+        }
+    )
     policy = {**common, "method": "larc"}
     _validate_learned_artifacts(
         policy,
+        common,
         common,
         method="larc",
         training_seed=3072,
@@ -89,6 +93,7 @@ def test_learned_artifact_validation_rejects_mixed_action_protocols():
         _validate_learned_artifacts(
             policy,
             incompatible_world,
+            common,
             method="larc",
             training_seed=3072,
             goal_offset=25,

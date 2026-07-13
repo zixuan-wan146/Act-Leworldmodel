@@ -38,11 +38,10 @@ The production run used:
 - the repository state containing this report and its associated implementation
   changes.
 
-At execution time the implementation changes were still based on Git commit
-`184771c` and had not yet been committed. The eventual commit containing the
-code, configs, tests, and this report should be treated as the durable source
-provenance. Resolved Hydra configs and raw metrics remain with the external run
-artifacts.
+The exact source tree used for this experiment was committed as `5e35041`.
+Resolved Hydra configs and raw metrics remain with the external run artifacts.
+Subsequent hardening changes preserve that result provenance rather than
+silently claiming that an older run was produced by newer code.
 
 ## Dataset and split
 

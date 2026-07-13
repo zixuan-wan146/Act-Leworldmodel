@@ -3,9 +3,12 @@ defaults:
   - world_model@model: fast_lewm
 
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-source_checkpoint: ${oc.env:PUSHT_LEWM_CHECKPOINT}
 output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model
 output_model_name: fast_lewm_backbone
+
+source_model:
+  config_path: configs/released_lewm/pusht.yaml
+  weights_path: ${oc.env:PUSHT_LEWM_WEIGHTS}
 
 seed: 3072
 image_size: 224

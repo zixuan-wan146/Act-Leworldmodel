@@ -12,11 +12,11 @@ from data.pusht_latent import (
     PushTLatentPolicyDataset,
     build_frame_latent_cache,
     calculate_action_statistics,
-    file_sha256,
     load_latent_metadata,
     preprocess_pusht_pixels,
     split_episode_ids,
 )
+from data.pusht_eval import PushTEvaluationDataset
 
 __all__ = [
     "ActionBlockTransform",
@@ -25,10 +25,10 @@ __all__ = [
     "IdentityActionTransform",
     "PushTLatentDynamicsDataset",
     "PushTLatentPolicyDataset",
+    "PushTEvaluationDataset",
     "ZScoreActionTransform",
     "build_frame_latent_cache",
     "calculate_action_statistics",
-    "file_sha256",
     "load_latent_metadata",
     "preprocess_pusht_pixels",
     "split_episode_ids",

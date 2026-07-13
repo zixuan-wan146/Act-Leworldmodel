@@ -1,11 +1,11 @@
 method: cem
+code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 device: cuda
 dataset_path: ${oc.env:PUSHT_DATASET_PATH}
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
 output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/eval
 
 environment:
-  name: swm/PushT-v1
   image_size: 224
 
 protocol:
@@ -22,7 +22,8 @@ world_model:
   weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/fast_lewm_backbone_best.pt
 
 cem:
-  checkpoint: ${oc.env:PUSHT_LEWM_CHECKPOINT}
+  config_path: configs/released_lewm/pusht.yaml
+  weights_path: ${oc.env:PUSHT_LEWM_WEIGHTS}
   batch_size: 1
   num_samples: 300
   var_scale: 1.0

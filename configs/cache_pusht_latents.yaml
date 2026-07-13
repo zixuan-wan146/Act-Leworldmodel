@@ -1,6 +1,9 @@
 dataset_path: ${oc.env:PUSHT_DATASET_PATH}
-source_checkpoint: ${oc.env:PUSHT_LEWM_CHECKPOINT}
 output_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
+
+source_model:
+  config_path: configs/released_lewm/pusht.yaml
+  weights_path: ${oc.env:PUSHT_LEWM_WEIGHTS}
 
 seed: 3072
 train_fraction: 0.9

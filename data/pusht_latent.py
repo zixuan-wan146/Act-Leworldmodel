@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import random
@@ -12,9 +11,14 @@ from pathlib import Path
 from typing import Literal
 
 import h5py
+import hdf5plugin  # noqa: F401  # Register compressed HDF5 filters before reads.
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+
+from models.world_model.artifacts import RELEASED_LEWM_KIND, load_portable_artifact
+from models.world_model.loading import load_released_lewm
+from utils import file_sha256
 
 
 CACHE_VERSION = 1
@@ -63,15 +67,6 @@ def calculate_action_statistics(
     )
 
 
-def file_sha256(path: str | Path, chunk_size: int = 8 * 1024 * 1024) -> str:
-    path = Path(path)
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(chunk_size):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _atomic_json_dump(payload: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -97,19 +92,23 @@ def _validate_cache_request(
     metadata: dict,
     *,
     dataset_path: Path,
-    source_checkpoint: Path,
+    source_config: Path,
+    source_weights: Path,
     seed: int,
     train_fraction: float,
     frameskip: int,
     max_horizon: int,
-) -> None:
+) -> dict[str, str]:
     dataset_stat = dataset_path.stat()
+    _, artifact_metadata = load_portable_artifact(
+        source_weights,
+        expected_kind=RELEASED_LEWM_KIND,
+    )
     expected = {
         "dataset_path": str(dataset_path),
         "dataset_size": dataset_stat.st_size,
         "dataset_mtime_ns": dataset_stat.st_mtime_ns,
-        "source_checkpoint": str(source_checkpoint),
-        "source_checkpoint_sha256": file_sha256(source_checkpoint),
+        "source_checkpoint_sha256": artifact_metadata["source_checkpoint_sha256"],
         "seed": int(seed),
         "train_fraction": float(train_fraction),
         "frameskip": int(frameskip),
@@ -121,6 +120,13 @@ def _validate_cache_request(
                 f"existing latent cache has incompatible {field}: "
                 f"{metadata.get(field)!r} != {value!r}"
             )
+    artifact_fields = {
+        "source_model_config": str(source_config),
+        "source_model_config_sha256": file_sha256(source_config),
+        "source_weights": str(source_weights),
+        "source_weights_sha256": file_sha256(source_weights),
+    }
+    return artifact_fields
 
 
 def split_episode_ids(
@@ -195,7 +201,8 @@ def preprocess_pusht_pixels(
 def build_frame_latent_cache(
     *,
     dataset_path: str | Path,
-    source_checkpoint: str | Path,
+    source_config: str | Path,
+    source_weights: str | Path,
     output_dir: str | Path,
     seed: int,
     train_fraction: float,
@@ -212,22 +219,27 @@ def build_frame_latent_cache(
     if frameskip < 1 or max_horizon < 1:
         raise ValueError("frameskip and max_horizon must be positive")
     dataset_path = Path(dataset_path).resolve()
-    source_checkpoint = Path(source_checkpoint).resolve()
+    source_config = Path(source_config).resolve()
+    source_weights = Path(source_weights).resolve()
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     latent_path = output_dir / _LATENT_FILENAME
     metadata_path = output_dir / _METADATA_FILENAME
     if (latent_path.exists() or metadata_path.exists()) and not overwrite:
         metadata = load_latent_metadata(output_dir)
-        _validate_cache_request(
+        artifact_fields = _validate_cache_request(
             metadata,
             dataset_path=dataset_path,
-            source_checkpoint=source_checkpoint,
+            source_config=source_config,
+            source_weights=source_weights,
             seed=seed,
             train_fraction=train_fraction,
             frameskip=frameskip,
             max_horizon=max_horizon,
         )
+        if any(metadata.get(key) != value for key, value in artifact_fields.items()):
+            metadata.update(artifact_fields)
+            _atomic_json_dump(metadata, metadata_path)
         return metadata
 
     random.seed(seed)
@@ -237,9 +249,7 @@ def build_frame_latent_cache(
         torch.cuda.manual_seed_all(seed)
 
     target_device = torch.device(device)
-    source_model = torch.load(source_checkpoint, map_location="cpu", weights_only=False)
-    if not hasattr(source_model, "encoder") or not hasattr(source_model, "projector"):
-        raise TypeError("source checkpoint does not expose LeWM encoder/projector modules")
+    source_model, source_metadata = load_released_lewm(source_config, source_weights)
     encoder = source_model.encoder.to(target_device).eval().requires_grad_(False)
     projector = source_model.projector.to(target_device).eval().requires_grad_(False)
 
@@ -303,8 +313,11 @@ def build_frame_latent_cache(
         "dataset_path": str(dataset_path),
         "dataset_size": dataset_path.stat().st_size,
         "dataset_mtime_ns": dataset_path.stat().st_mtime_ns,
-        "source_checkpoint": str(source_checkpoint),
-        "source_checkpoint_sha256": file_sha256(source_checkpoint),
+        "source_model_config": str(source_config),
+        "source_model_config_sha256": file_sha256(source_config),
+        "source_weights": str(source_weights),
+        "source_weights_sha256": file_sha256(source_weights),
+        "source_checkpoint_sha256": source_metadata["source_checkpoint_sha256"],
         "seed": int(seed),
         "train_fraction": float(train_fraction),
         "train_episode_ids": train_episodes.tolist(),

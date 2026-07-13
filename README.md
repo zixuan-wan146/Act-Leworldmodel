@@ -15,27 +15,33 @@ policies train from the same episode-separated latent cache.
 
 ## Environment and storage
 
-Use the existing LeWM Python environment. Datasets, caches, checkpoints, logs,
-videos, and raw metrics belong outside the repository. Configure their roots
-before running an experiment:
+The project runtime is self-contained and does not import the reference
+submodule, `stable-worldmodel`, or `stable-pretraining`. Datasets, tensor-only
+weights, caches, logs, videos, and raw metrics belong outside the repository.
+Configure their roots before running an experiment:
 
 ```bash
 export PUSHT_DATASET_PATH=/data/datasets/pusht_expert_train.h5
-export PUSHT_LEWM_CHECKPOINT=/data/checkpoints/pusht/lewm_object.ckpt
+export PUSHT_LEWM_WEIGHTS=/data/checkpoints/pusht/released_lewm_state.pt
 export ACT_LEWM_CACHE_ROOT=/data/act-lewm-cache
 export ACT_LEWM_RUN_ROOT=/data/act-lewm-runs
-export SPT_CACHE_DIR=/data/stable-pretraining-cache
 export HF_HOME=/data/huggingface-cache
+export UV_CACHE_DIR=/data/uv-cache
 ```
 
-Install the project and its test dependency into that environment:
+Install the locked project environment:
 
 ```bash
-python -m pip install -e '.[test]'
+uv sync --frozen --extra test
 ```
 
-The first four variables are required; the last two keep library caches off
-the system disk. No project config contains a personal absolute path.
+The first four variables are required; `HF_HOME` and `UV_CACHE_DIR` keep
+library/build caches off the system disk. No project config contains a personal absolute path.
+
+`PUSHT_LEWM_WEIGHTS` must point to the project portable artifact described in
+[`docs/checkpoint_format.md`](docs/checkpoint_format.md). Legacy Python-object
+checkpoints are deliberately rejected: models are reconstructed from project
+YAML and only tensor state dictionaries are loaded with `weights_only=True`.
 
 ## Push-T action protocol
 
@@ -66,6 +72,7 @@ python -m train.train_world_model
 python -m eval.open_loop_curve
 python -m train.train_gc_idm
 python -m train.train_larc
+export ACT_LEWM_CODE_REVISION="$(git rev-parse HEAD)"
 python -m eval.closed_loop method=cem
 python -m eval.closed_loop method=gc_idm
 python -m eval.closed_loop method=larc
@@ -75,6 +82,11 @@ python -m eval.summarize "$ACT_LEWM_RUN_ROOT/pusht/eval" results --seed 42
 The same sequence is available as `scripts/pusht_full.sh`. Every stage is
 configuration-driven and writes resumable checkpoints or deterministic cache
 metadata under the external roots.
+The full script refuses a dirty Git worktree and derives
+ACT_LEWM_CODE_REVISION automatically. Direct closed-loop commands must set it
+to the full evaluated commit. Result JSON files record that commit plus the
+SHA-256 of every loaded config, weight, and metadata artifact.
+
 
 New dynamics and policy training use seed `3072`. Whole episodes are split
 90/10 before their normalization or clip creation, so overlapping trajectory
@@ -97,6 +109,9 @@ Tests cover action packing, episode separation, cache indexing, causal masks,
 AdaLN-zero initialization, frozen parameter behavior, action gradients, and
 variable-horizon LARC losses. `scripts/phase0_smoke.sh` also validates that all
 Hydra configurations compose.
+Additional regression tests lock the nonzero-angle Push-T physics/rendering
+trajectory, terminated-row CEM random stream, checkpoint formats, evaluation
+artifact hashes, and cross-result provenance.
 
 ## Backbone API
 

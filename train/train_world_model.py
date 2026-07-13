@@ -13,9 +13,11 @@ from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from data import PushTLatentDynamicsDataset, file_sha256, load_latent_metadata
+from data import PushTLatentDynamicsDataset, load_latent_metadata
 from models.world_model import initialize_representation_from_lewm
+from models.world_model.artifacts import RELEASED_LEWM_KIND, load_portable_artifact
 from train.reproducibility import configure_reproducibility, make_generator
+from utils import file_sha256
 
 
 class LatentDynamicsTrainingModule(pl.LightningModule):
@@ -144,10 +146,22 @@ def _make_loader(dataset, cfg: DictConfig, *, shuffle: bool, seed: int):
 def run(cfg: DictConfig) -> None:
     configure_reproducibility(cfg.seed)
     metadata = load_latent_metadata(cfg.latent_cache_dir)
-    if Path(metadata["source_checkpoint"]).resolve() != Path(cfg.source_checkpoint).resolve():
-        raise ValueError("configured source checkpoint differs from the latent cache")
-    if file_sha256(cfg.source_checkpoint) != metadata["source_checkpoint_sha256"]:
-        raise ValueError("configured source checkpoint content differs from the latent cache")
+    _, source_metadata = load_portable_artifact(
+        cfg.source_model.weights_path,
+        expected_kind=RELEASED_LEWM_KIND,
+    )
+    if source_metadata["source_checkpoint_sha256"] != metadata["source_checkpoint_sha256"]:
+        raise ValueError("configured source representation differs from the latent cache")
+    if metadata.get("source_model_config_sha256") not in (
+        None,
+        file_sha256(cfg.source_model.config_path),
+    ):
+        raise ValueError("source model config differs from the latent cache")
+    if metadata.get("source_weights_sha256") not in (
+        None,
+        file_sha256(cfg.source_model.weights_path),
+    ):
+        raise ValueError("source model weights differ from the latent cache")
     if int(cfg.latent_dim) != int(metadata["latent_dim"]):
         raise ValueError("configured latent width differs from the latent cache")
     if int(cfg.max_horizon) != int(metadata["max_horizon"]):
@@ -179,7 +193,7 @@ def run(cfg: DictConfig) -> None:
     model = hydra.utils.instantiate(cfg.model)
     initialize_representation_from_lewm(
         model,
-        cfg.source_checkpoint,
+        cfg.source_model.weights_path,
         freeze=cfg.freeze_representation,
     )
     objective = hydra.utils.instantiate(cfg.objective)
@@ -202,7 +216,8 @@ def run(cfg: DictConfig) -> None:
             **metadata,
             "training_seed": int(cfg.seed),
             "freeze_representation": bool(cfg.freeze_representation),
-            "source_checkpoint": str(Path(cfg.source_checkpoint).resolve()),
+            "source_model_config": str(Path(cfg.source_model.config_path).resolve()),
+            "source_weights": str(Path(cfg.source_model.weights_path).resolve()),
         },
         filename_prefix=cfg.output_model_name,
         interval=cfg.checkpoint_interval,

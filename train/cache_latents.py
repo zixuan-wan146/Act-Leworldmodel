@@ -15,7 +15,8 @@ def run(cfg: DictConfig) -> dict:
     configure_reproducibility(cfg.seed)
     metadata = build_frame_latent_cache(
         dataset_path=cfg.dataset_path,
-        source_checkpoint=cfg.source_checkpoint,
+        source_config=cfg.source_model.config_path,
+        source_weights=cfg.source_model.weights_path,
         output_dir=cfg.output_dir,
         seed=cfg.seed,
         train_fraction=cfg.train_fraction,

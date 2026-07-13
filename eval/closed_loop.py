@@ -1,4 +1,4 @@
-"""Fixed-seed Push-T closed-loop evaluation for CEM, GC-IDM, and LARC."""
+"""Fixed-seed Push-T evaluation using only project-owned runtime components."""
 
 from __future__ import annotations
 
@@ -9,40 +9,109 @@ from collections import deque
 from pathlib import Path
 
 import hydra
-import h5py
 import numpy as np
-import stable_worldmodel as swm
 import torch
+from gymnasium.vector.utils import batch_space
 from omegaconf import DictConfig, OmegaConf
-from sklearn.preprocessing import StandardScaler
 
 from controllers import Controller
+from controllers.baselines import CEMController, CEMPlanner
 from controllers.learned import GCIDMController, LARCController
 from data import (
     ActionBlockTransform,
     ActionStatistics,
+    PushTEvaluationDataset,
     ZScoreActionTransform,
     calculate_action_statistics,
-    file_sha256,
     load_latent_metadata,
     preprocess_pusht_pixels,
 )
 from eval.protocol import create_or_load_manifest
-from models.world_model import load_frozen_world_model
+from eval.provenance import (
+    artifact_record,
+    validate_artifact_records,
+    validate_code_revision,
+)
+from eval.pusht_env import PushTEnv
+from models.world_model import load_frozen_world_model, load_released_lewm
+from models.world_model.artifacts import load_tensor_state_dict
 from train.reproducibility import configure_reproducibility
+from utils import file_sha256, is_sha256
 
 
-PUSHT_CALLABLES = [
-    {"method": "_set_state", "args": {"state": {"value": "state"}}},
-    {
-        "method": "_set_goal_state",
-        "args": {"goal_state": {"value": "goal_state"}},
-    },
-]
+LINEAGE_FIELDS = (
+    "version",
+    "dataset_path",
+    "dataset_size",
+    "dataset_mtime_ns",
+    "source_checkpoint_sha256",
+    "seed",
+    "train_fraction",
+    "train_episode_ids",
+    "validation_episode_ids",
+    "episode_lengths",
+    "episode_offsets",
+    "frame_count",
+    "frameskip",
+    "max_horizon",
+    "max_goal_offset",
+    "latent_dim",
+    "latent_dtype",
+    "raw_action_dim",
+    "action_statistics",
+)
+
+
+def _evaluation_artifacts(cfg: DictConfig, method: str) -> dict[str, dict[str, str]]:
+    cache_metadata = Path(cfg.latent_cache_dir) / "metadata.json"
+    records = {"latent_cache_metadata": artifact_record(cache_metadata)}
+    if method == "cem":
+        records.update(
+            {
+                "released_lewm_config": artifact_record(cfg.cem.config_path),
+                "released_lewm_weights": artifact_record(cfg.cem.weights_path),
+            }
+        )
+        return records
+
+    policy_dir = Path(cfg[method].directory)
+    world_config = Path(cfg.world_model.config_path)
+    records.update(
+        {
+            "world_model_config": artifact_record(world_config),
+            "world_model_weights": artifact_record(cfg.world_model.weights_path),
+            "world_model_metadata": artifact_record(world_config.with_name("model_metadata.json")),
+            "policy_config": artifact_record(policy_dir / "policy_config.yaml"),
+            "policy_weights": artifact_record(policy_dir / cfg[method].weights),
+            "policy_metadata": artifact_record(policy_dir / "policy_metadata.json"),
+        }
+    )
+    return records
+
+
+def _validate_cem_source_artifacts(cache_metadata: dict, cfg: DictConfig) -> None:
+    expected_files = (
+        (
+            "source_model_config_sha256",
+            cfg.cem.config_path,
+            "CEM model config",
+        ),
+        (
+            "source_weights_sha256",
+            cfg.cem.weights_path,
+            "CEM model weights",
+        ),
+    )
+    for metadata_field, path, label in expected_files:
+        expected = cache_metadata.get(metadata_field)
+        if not is_sha256(expected):
+            raise ValueError(f"latent cache is missing {metadata_field}")
+        if file_sha256(path) != expected:
+            raise ValueError(f"{label} differ from the latent-cache representation source")
 
 
 class LearnedPushTPolicy:
-    """Adapt learned latent policies to stable-worldmodel's vectorized API."""
+    """Adapt a project controller to the batched evaluation loop."""
 
     def __init__(
         self,
@@ -79,13 +148,11 @@ class LearnedPushTPolicy:
         if not rows.any():
             return
         self._elapsed[rows] = 0
-        # A vector controller caches one goal batch. If any vector row resets,
-        # refresh that batch and discard every stale open-loop prefix.
-        for index in range(self.env.num_envs):
-            self._buffers[index].clear()
+        for buffer in self._buffers:
+            buffer.clear()
         self._has_goal = False
 
-    def get_action(self, info_dict: dict, **kwargs) -> np.ndarray:
+    def get_action(self, info_dict: dict) -> np.ndarray:
         if self.env is None:
             raise RuntimeError("policy must be attached to an environment")
         needs_flush = np.asarray(
@@ -104,39 +171,82 @@ class LearnedPushTPolicy:
         alive = ~terminated
 
         with torch.inference_mode():
-            replan_rows = np.asarray(
+            replan = np.asarray(
                 [alive[index] and not self._buffers[index] for index in range(self.env.num_envs)]
             )
-            rows = np.flatnonzero(replan_rows)
+            rows = np.flatnonzero(replan).astype(np.int64, copy=False)
             if len(rows):
                 remaining_values = np.maximum(
                     self.goal_offset - self._elapsed,
                     self.minimum_horizon,
                 )
-                remaining = torch.from_numpy(remaining_values).to(self.device)
-                command = self.controller.act(self._preprocess(info_dict["pixels"]), remaining)
+                indices = torch.from_numpy(rows).to(self.device)
+                remaining = torch.from_numpy(remaining_values[rows]).to(self.device)
+                command = self.controller.act(
+                    self._preprocess(np.asarray(info_dict["pixels"])[rows]),
+                    remaining,
+                    batch_indices=indices,
+                )
                 chunks = command.actions.float().cpu().numpy()
-                for env_index in rows:
-                    self._buffers[env_index].extend(chunks[env_index, : command.replan_after])
+                for chunk_index, env_index in enumerate(rows):
+                    self._buffers[env_index].extend(chunks[chunk_index, : command.replan_after])
             for env_index in np.flatnonzero(alive):
                 if not self._buffers[env_index]:
-                    raise RuntimeError("learned-controller action buffer unexpectedly empty")
+                    raise RuntimeError("controller action buffer unexpectedly empty")
                 output[env_index] = self._buffers[env_index].popleft()
 
-        low = np.asarray(self.env.single_action_space.low)
-        high = np.asarray(self.env.single_action_space.high)
-        output[alive] = np.clip(output[alive], low, high)
+        output[alive] = np.clip(
+            output[alive],
+            self.env.single_action_space.low,
+            self.env.single_action_space.high,
+        )
         self._elapsed[alive] += 1
-        return output.reshape(self.env.action_space.shape)
+        return output
 
 
-def _image_transform(image: torch.Tensor) -> torch.Tensor:
-    return preprocess_pusht_pixels(image.unsqueeze(0), image.device)[0]
+class PushTEvaluationPool:
+    """Small selective-step pool for one fixed evaluation manifest."""
+
+    def __init__(self, count: int, resolution: int) -> None:
+        if count < 1:
+            raise ValueError("evaluation pool must contain at least one environment")
+        self.envs = [PushTEnv(resolution=resolution) for _ in range(count)]
+        self.single_action_space = self.envs[0].action_space
+        self.action_space = batch_space(self.single_action_space, count)
+
+    @property
+    def num_envs(self) -> int:
+        return len(self.envs)
+
+    def initialize(self, states: np.ndarray, goal_states: np.ndarray) -> None:
+        if len(states) != self.num_envs or len(goal_states) != self.num_envs:
+            raise ValueError("state batches differ from the evaluation pool")
+        for env, state, goal_state in zip(self.envs, states, goal_states):
+            env.reset(options={"state": state, "goal_state": goal_state})
+
+    def step(
+        self,
+        actions: np.ndarray,
+        alive: np.ndarray,
+        previous_pixels: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        pixels = previous_pixels.copy()
+        terminated = np.zeros(self.num_envs, dtype=bool)
+        for index in np.flatnonzero(alive):
+            _, _, done, _, info = self.envs[index].step(actions[index])
+            pixels[index] = info["pixels"]
+            terminated[index] = done
+        return pixels, terminated
+
+    def close(self) -> None:
+        for env in self.envs:
+            env.close()
 
 
 def _validate_learned_artifacts(
     policy_metadata: dict,
     world_metadata: dict,
+    cache_metadata: dict,
     *,
     method: str,
     training_seed: int,
@@ -144,17 +254,18 @@ def _validate_learned_artifacts(
 ) -> None:
     if policy_metadata.get("method") != method:
         raise ValueError("policy metadata method does not match requested evaluation method")
-    for field in (
-        "source_checkpoint_sha256",
-        "seed",
-        "train_fraction",
-        "frameskip",
-        "max_horizon",
-        "latent_dim",
-        "action_statistics",
+    for field in LINEAGE_FIELDS:
+        if field not in cache_metadata:
+            raise ValueError(f"latent cache metadata is missing lineage field {field}")
+    for artifact_name, artifact in (
+        ("policy", policy_metadata),
+        ("world model", world_metadata),
     ):
-        if policy_metadata.get(field) != world_metadata.get(field):
-            raise ValueError(f"policy and world model have incompatible {field}")
+        for field in LINEAGE_FIELDS:
+            if field not in artifact:
+                raise ValueError(f"{artifact_name} metadata is missing lineage field {field}")
+            if artifact[field] != cache_metadata[field]:
+                raise ValueError(f"{artifact_name} and latent cache have incompatible {field}")
     if policy_metadata.get("training_seed") != training_seed:
         raise ValueError("policy training seed does not match the evaluation protocol")
     if world_metadata.get("training_seed") != training_seed:
@@ -163,13 +274,15 @@ def _validate_learned_artifacts(
         raise ValueError("evaluation goal offset exceeds the policy training horizon")
 
 
-def _load_learned_policy(cfg: DictConfig, method: str):
+def _load_learned_policy(cfg: DictConfig, method: str, cache_metadata: dict):
     world_model = load_frozen_world_model(cfg.world_model.config_path, cfg.world_model.weights_path)
     policy_dir = Path(cfg[method].directory)
     policy_config = OmegaConf.load(policy_dir / "policy_config.yaml")
     policy = hydra.utils.instantiate(policy_config)
-    state = torch.load(policy_dir / cfg[method].weights, map_location="cpu", weights_only=True)
-    policy.load_state_dict(state, strict=True)
+    policy.load_state_dict(
+        load_tensor_state_dict(policy_dir / cfg[method].weights),
+        strict=True,
+    )
     metadata = json.loads((policy_dir / "policy_metadata.json").read_text())
     world_metadata = json.loads(
         Path(cfg.world_model.config_path).with_name("model_metadata.json").read_text()
@@ -177,16 +290,15 @@ def _load_learned_policy(cfg: DictConfig, method: str):
     _validate_learned_artifacts(
         metadata,
         world_metadata,
+        cache_metadata,
         method=method,
         training_seed=cfg.protocol.training_seed,
         goal_offset=cfg.protocol.goal_offset,
     )
     stats = ActionStatistics.from_mapping(metadata["action_statistics"])
-    mean = torch.tensor(stats.mean)
-    std = torch.tensor(stats.std)
+    mean, std = torch.tensor(stats.mean), torch.tensor(stats.std)
     if method == "gc_idm":
-        transform = ZScoreActionTransform(mean, std)
-        controller = GCIDMController(world_model, policy, transform)
+        controller = GCIDMController(world_model, policy, ZScoreActionTransform(mean, std))
         minimum_horizon = 1
     else:
         transform = ActionBlockTransform(mean, std, frameskip=metadata["frameskip"])
@@ -205,23 +317,25 @@ def _load_learned_policy(cfg: DictConfig, method: str):
     )
 
 
-def _load_cem_policy(cfg: DictConfig):
-    model = torch.load(cfg.cem.checkpoint, map_location="cpu", weights_only=False)
-    model = model.to(cfg.device).eval().requires_grad_(False)
-    model.interpolate_pos_encoding = True
-    # The released LeWM checkpoint was trained with a scaler fit to the full
-    # official Push-T training file. Reproduce that scaler exactly; our new
-    # train/validation split statistics belong only to Fast-LeWM and policies.
-    with h5py.File(cfg.dataset_path, "r", swmr=True) as dataset:
-        stats = calculate_action_statistics(dataset["action"][:])
-    scaler = StandardScaler()
-    scaler.mean_ = np.asarray(stats.mean, dtype=np.float64)
-    scaler.scale_ = np.asarray(stats.std, dtype=np.float64)
-    scaler.var_ = np.square(scaler.scale_)
-    scaler.n_features_in_ = len(stats.mean)
-    scaler.n_samples_seen_ = 1
-    solver = swm.solver.CEMSolver(
+def _load_cem_policy(
+    cfg: DictConfig,
+    cache_metadata: dict,
+    dataset: PushTEvaluationDataset,
+):
+    model, artifact_metadata = load_released_lewm(cfg.cem.config_path, cfg.cem.weights_path)
+    if artifact_metadata["source_checkpoint_sha256"] != cache_metadata["source_checkpoint_sha256"]:
+        raise ValueError("CEM weights differ from the latent-cache representation source")
+    stats = calculate_action_statistics(dataset.action_array())
+    transform = ActionBlockTransform(
+        torch.tensor(stats.mean),
+        torch.tensor(stats.std),
+        frameskip=cfg.cem.action_block,
+    )
+    planner = CEMPlanner(
         model=model,
+        action_transform=transform,
+        horizon=cfg.cem.horizon,
+        receding_horizon=cfg.cem.receding_horizon,
         batch_size=cfg.cem.batch_size,
         num_samples=cfg.cem.num_samples,
         var_scale=cfg.cem.var_scale,
@@ -229,32 +343,64 @@ def _load_cem_policy(cfg: DictConfig):
         topk=cfg.cem.topk,
         device=cfg.device,
         seed=cfg.protocol.seed,
-    )
-    plan_config = swm.PlanConfig(
-        horizon=cfg.cem.horizon,
-        receding_horizon=cfg.cem.receding_horizon,
-        history_len=cfg.cem.history_len,
-        action_block=cfg.cem.action_block,
         warm_start=cfg.cem.warm_start,
     )
-    return swm.policy.WorldModelPolicy(
-        solver=solver,
-        config=plan_config,
-        process={"action": scaler},
-        transform={"pixels": _image_transform, "goal": _image_transform},
+    return LearnedPushTPolicy(
+        controller=CEMController(planner, commit_steps=planner.commit_steps),
+        goal_offset=cfg.protocol.goal_offset,
+        minimum_horizon=cfg.cem.action_block,
+        device=cfg.device,
     )
 
 
-def _jsonable_metrics(metrics: dict) -> dict:
-    output = {}
-    for key, value in metrics.items():
-        if isinstance(value, np.ndarray):
-            output[key] = value.tolist()
-        elif isinstance(value, np.generic):
-            output[key] = value.item()
-        else:
-            output[key] = value
-    return output
+def _evaluate(
+    *,
+    policy: LearnedPushTPolicy,
+    pool: PushTEvaluationPool,
+    rows: dict[str, np.ndarray],
+    eval_budget: int,
+    video_dir: Path | None,
+) -> dict:
+    pool.initialize(rows["state"], rows["goal_state"])
+    policy.set_env(pool)
+    pixels = np.asarray(rows["pixels"]).copy()
+    goals = np.asarray(rows["goal_pixels"]).copy()
+    alive = np.ones(pool.num_envs, dtype=bool)
+    successes = np.zeros(pool.num_envs, dtype=bool)
+    frames = [[pixels[index].copy()] for index in range(pool.num_envs)] if video_dir else None
+    info = {
+        "pixels": pixels[:, None],
+        "goal": goals[:, None],
+        "terminated": ~alive,
+        "_needs_flush": np.ones(pool.num_envs, dtype=bool),
+    }
+    for _ in range(eval_budget):
+        actions = policy.get_action(info)
+        pixels, terminated = pool.step(actions, alive, pixels)
+        successes |= terminated
+        alive &= ~terminated
+        if frames is not None:
+            for index in range(pool.num_envs):
+                frames[index].append(pixels[index].copy())
+        info = {
+            "pixels": pixels[:, None],
+            "goal": goals[:, None],
+            "terminated": ~alive,
+            "_needs_flush": np.zeros(pool.num_envs, dtype=bool),
+        }
+        if not alive.any():
+            break
+    if frames is not None:
+        import imageio.v3 as imageio
+
+        video_dir.mkdir(parents=True, exist_ok=True)
+        for index, episode_frames in enumerate(frames):
+            imageio.imwrite(video_dir / f"episode_{index:03d}.mp4", episode_frames, fps=10)
+    return {
+        "success_rate": float(successes.mean() * 100.0),
+        "episode_successes": successes.tolist(),
+        "seeds": None,
+    }
 
 
 def run(cfg: DictConfig) -> dict:
@@ -262,12 +408,11 @@ def run(cfg: DictConfig) -> dict:
     method = str(cfg.method)
     if method not in ("cem", "gc_idm", "larc"):
         raise ValueError("method must be cem, gc_idm, or larc")
+    code_revision = validate_code_revision(str(cfg.code_revision))
     cache_metadata = load_latent_metadata(cfg.latent_cache_dir)
-    if (
-        method == "cem"
-        and file_sha256(cfg.cem.checkpoint) != cache_metadata["source_checkpoint_sha256"]
-    ):
-        raise ValueError("CEM checkpoint differs from the released LeWM cache source")
+    artifacts = _evaluation_artifacts(cfg, method)
+    if method == "cem":
+        _validate_cem_source_artifacts(cache_metadata, cfg)
     manifest = create_or_load_manifest(
         dataset_path=cfg.dataset_path,
         latent_cache_dir=cfg.latent_cache_dir,
@@ -276,40 +421,45 @@ def run(cfg: DictConfig) -> dict:
         num_eval=cfg.protocol.num_eval,
         goal_offset=cfg.protocol.goal_offset,
     )
-    dataset = swm.data.HDF5Dataset(
-        path=cfg.dataset_path,
-        keys_to_load=["pixels", "action", "proprio", "state"],
-        keys_to_cache=["action", "proprio", "state"],
-    )
-    world = swm.World(
-        env_name=cfg.environment.name,
-        num_envs=cfg.protocol.num_eval,
-        image_shape=(cfg.environment.image_size, cfg.environment.image_size),
-        max_episode_steps=2 * cfg.protocol.eval_budget,
-    )
-    policy = _load_cem_policy(cfg) if method == "cem" else _load_learned_policy(cfg, method)
-    world.set_policy(policy)
-    output_dir = Path(cfg.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    video_dir = output_dir / f"{method}_videos" if cfg.protocol.video else None
-    started = time.time()
-    try:
-        metrics = world.evaluate(
-            dataset=dataset,
-            start_steps=manifest["start_steps"],
-            goal_offset=cfg.protocol.goal_offset,
-            eval_budget=cfg.protocol.eval_budget,
-            episodes_idx=manifest["episode_indices"],
-            callables=PUSHT_CALLABLES,
-            video=video_dir,
+    manifest_path = Path(cfg.protocol.manifest_path).resolve()
+    manifest_sha256 = file_sha256(manifest_path)
+    with PushTEvaluationDataset(cfg.dataset_path) as dataset:
+        rows = dataset.evaluation_rows(
+            manifest["episode_indices"],
+            manifest["start_steps"],
+            cfg.protocol.goal_offset,
         )
-    finally:
-        world.close()
+        policy = (
+            _load_cem_policy(cfg, cache_metadata, dataset)
+            if method == "cem"
+            else _load_learned_policy(cfg, method, cache_metadata)
+        )
+        pool = PushTEvaluationPool(cfg.protocol.num_eval, cfg.environment.image_size)
+        output_dir = Path(cfg.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        video_dir = output_dir / f"{method}_videos" if cfg.protocol.video else None
+        started = time.time()
+        try:
+            metrics = _evaluate(
+                policy=policy,
+                pool=pool,
+                rows=rows,
+                eval_budget=cfg.protocol.eval_budget,
+                video_dir=video_dir,
+            )
+        finally:
+            pool.close()
+    if file_sha256(manifest_path) != manifest_sha256:
+        raise RuntimeError("evaluation manifest changed during execution")
+    validate_artifact_records(artifacts, verify_files=True)
     result = {
         "method": method,
-        "metrics": _jsonable_metrics(metrics),
+        "metrics": metrics,
         "elapsed_seconds": time.time() - started,
-        "manifest": str(Path(cfg.protocol.manifest_path).resolve()),
+        "code_revision": code_revision,
+        "manifest": str(manifest_path),
+        "manifest_sha256": manifest_sha256,
+        "artifacts": artifacts,
         "config": OmegaConf.to_container(cfg, resolve=True),
     }
     destination = output_dir / f"{method}_seed_{cfg.protocol.seed}.json"

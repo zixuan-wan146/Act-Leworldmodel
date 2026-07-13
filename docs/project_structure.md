@@ -14,8 +14,9 @@ train/                      Separate world-model, GC-IDM, and LARC entry points.
 eval/                       Closed-loop, open-loop, and protocol evaluation.
 scripts/                    Reproducible phase-level experiment commands.
 tests/                      Unit and integration tests.
+utils/                      Dependency-free helpers shared across package layers.
 results/                    Versioned result reports and figures.
-third_party/                Pinned external source dependencies.
+third_party/                Read-only implementation references; never imported at runtime.
 ```
 
 ## Boundaries

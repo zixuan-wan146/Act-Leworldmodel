@@ -25,6 +25,20 @@ class ActionCommand:
             raise ValueError("replan_after must fall inside the returned action chunk")
 
 
+def select_batch_rows(
+    values: torch.Tensor,
+    batch_indices: torch.Tensor | None,
+) -> torch.Tensor:
+    """Select environment rows from controller state on the correct device."""
+
+    if batch_indices is None:
+        return values
+    indices = torch.as_tensor(batch_indices, dtype=torch.long, device=values.device)
+    if indices.ndim != 1:
+        raise ValueError("batch_indices must be a one-dimensional tensor")
+    return values.index_select(0, indices)
+
+
 class Controller(nn.Module, ABC):
     """Stateful controller used by the shared closed-loop evaluation protocol."""
 
@@ -37,5 +51,7 @@ class Controller(nn.Module, ABC):
         self,
         observation: torch.Tensor,
         steps_remaining: int | torch.Tensor,
+        *,
+        batch_indices: torch.Tensor | None = None,
     ) -> ActionCommand:
-        """Return one action chunk and its commitment length."""
+        """Return one action chunk for the selected environment rows."""

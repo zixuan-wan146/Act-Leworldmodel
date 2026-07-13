@@ -1,5 +1,5 @@
 """Search-based evaluation baselines."""
 
-from controllers.baselines.cem import CEMController
+from controllers.baselines.cem import CEMController, CEMPlanner
 
-__all__ = ["CEMController"]
+__all__ = ["CEMController", "CEMPlanner"]

@@ -100,18 +100,29 @@ def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
 
 def test_existing_cache_rejects_incompatible_protocol(tmp_path):
     _make_cache(tmp_path)
-    checkpoint_path = tmp_path / "source.ckpt"
-    checkpoint_path.write_bytes(b"checkpoint")
+    source_hash = hashlib.sha256(b"checkpoint").hexdigest()
+    config_path = tmp_path / "source.yaml"
+    config_path.write_text("_target_: unused\n")
+    weights_path = tmp_path / "source.pt"
+    torch.save(
+        {
+            "format_version": 1,
+            "model_kind": "released_lewm",
+            "metadata": {"source_checkpoint_sha256": source_hash},
+            "state_dict": {"weight": torch.ones(1)},
+        },
+        weights_path,
+    )
     metadata_path = tmp_path / "metadata.json"
     metadata = json.loads(metadata_path.read_text())
-    metadata["source_checkpoint"] = str(checkpoint_path)
-    metadata["source_checkpoint_sha256"] = hashlib.sha256(b"checkpoint").hexdigest()
+    metadata["source_checkpoint_sha256"] = source_hash
     metadata_path.write_text(json.dumps(metadata))
 
     with pytest.raises(ValueError, match="incompatible seed"):
         build_frame_latent_cache(
             dataset_path=tmp_path / "pusht.h5",
-            source_checkpoint=checkpoint_path,
+            source_config=config_path,
+            source_weights=weights_path,
             output_dir=tmp_path,
             seed=4,
             train_fraction=0.5,

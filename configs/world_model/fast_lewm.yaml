@@ -2,12 +2,13 @@ _target_: models.world_model.FastLeWMBackbone
 interpolate_pos_encoding: true
 
 encoder:
-  _target_: stable_pretraining.backbone.utils.vit_hf
-  size: tiny
+  _target_: models.world_model.build_vit_encoder
+  hidden_size: 192
+  depth: 12
+  heads: 3
+  mlp_dim: 768
   patch_size: 14
   image_size: ${image_size}
-  pretrained: false
-  use_mask_token: false
 
 projector:
   _target_: models.world_model.ProjectionMLP

@@ -13,6 +13,38 @@ import numpy as np
 from data import load_latent_metadata
 
 
+def _integer_list(manifest: dict, key: str, expected_length: int) -> np.ndarray:
+    value = manifest.get(key)
+    if not isinstance(value, list) or len(value) != expected_length:
+        raise ValueError(f"evaluation manifest {key} must contain {expected_length} integers")
+    if any(isinstance(item, bool) or not isinstance(item, int) for item in value):
+        raise ValueError(f"evaluation manifest {key} must contain only integers")
+    return np.asarray(value, dtype=np.int64)
+
+
+def _validate_manifest_entries(
+    manifest: dict,
+    *,
+    validation_episodes: np.ndarray,
+    episode_lengths: np.ndarray,
+    num_eval: int,
+    goal_offset: int,
+) -> None:
+    episodes = _integer_list(manifest, "episode_indices", num_eval)
+    starts = _integer_list(manifest, "start_steps", num_eval)
+    if len(np.unique(episodes)) != num_eval:
+        raise ValueError("evaluation manifest episode_indices must be unique")
+    if np.any(episodes < 0) or np.any(episodes >= len(episode_lengths)):
+        raise ValueError("evaluation manifest contains an out-of-range episode")
+    if not np.isin(episodes, validation_episodes).all():
+        raise ValueError("evaluation manifest contains a non-validation episode")
+    upper_bounds = episode_lengths[episodes] - goal_offset
+    if np.any(upper_bounds <= 0):
+        raise ValueError("evaluation manifest contains an episode shorter than the goal offset")
+    if np.any(starts < 0) or np.any(starts >= upper_bounds):
+        raise ValueError("evaluation manifest contains an out-of-range start step")
+
+
 def create_or_load_manifest(
     *,
     dataset_path: str | Path,
@@ -37,6 +69,8 @@ def create_or_load_manifest(
     if dataset_stat.st_mtime_ns != cache_metadata["dataset_mtime_ns"]:
         raise ValueError("evaluation dataset timestamp changed after latent caching")
     validation = np.asarray(cache_metadata["validation_episode_ids"], dtype=np.int64)
+    if validation.ndim != 1 or len(np.unique(validation)) != len(validation):
+        raise ValueError("latent cache validation episode IDs must be a unique vector")
     validation_digest = hashlib.sha256(validation.astype("<i8", copy=False).tobytes()).hexdigest()
     expected = {
         "version": 1,
@@ -51,15 +85,23 @@ def create_or_load_manifest(
         "num_eval": int(num_eval),
         "goal_offset": int(goal_offset),
     }
+    with h5py.File(dataset_path, "r", swmr=True) as dataset:
+        lengths = dataset["ep_len"][:].astype(np.int64)
+    if np.any(validation < 0) or np.any(validation >= len(lengths)):
+        raise ValueError("latent cache contains an out-of-range validation episode")
     if output_path.exists():
         manifest = json.loads(output_path.read_text())
         for key, value in expected.items():
             if manifest.get(key) != value:
                 raise ValueError(f"existing evaluation manifest has incompatible {key}")
+        _validate_manifest_entries(
+            manifest,
+            validation_episodes=validation,
+            episode_lengths=lengths,
+            num_eval=num_eval,
+            goal_offset=goal_offset,
+        )
         return manifest
-
-    with h5py.File(dataset_path, "r", swmr=True) as dataset:
-        lengths = dataset["ep_len"][:].astype(np.int64)
     eligible = validation[lengths[validation] > goal_offset]
     if len(eligible) < num_eval:
         raise ValueError("not enough validation episodes for the evaluation protocol")
@@ -74,6 +116,13 @@ def create_or_load_manifest(
         "episode_indices": episodes.tolist(),
         "start_steps": starts.tolist(),
     }
+    _validate_manifest_entries(
+        manifest,
+        validation_episodes=validation,
+        episode_lengths=lengths,
+        num_eval=num_eval,
+        goal_offset=goal_offset,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".tmp")
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

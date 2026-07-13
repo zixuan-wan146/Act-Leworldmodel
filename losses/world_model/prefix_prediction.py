@@ -10,7 +10,7 @@ class SIGReg(nn.Module):
     """Sketch Isotropic Gaussian Regularizer from LeWorldModel.
 
     Adapted from the MIT-licensed implementation in
-    `third_party/le-wm/module.py`. Inputs follow `[batch, time, latent_dim]`.
+    the released representation objective. Inputs follow `[batch, time, latent_dim]`.
     """
 
     def __init__(self, knots: int = 17, num_projections: int = 1024) -> None:

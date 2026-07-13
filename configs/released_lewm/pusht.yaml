@@ -1,0 +1,42 @@
+_target_: models.world_model.ReleasedLeWM
+
+encoder:
+  _target_: models.world_model.build_vit_encoder
+  image_size: 224
+  patch_size: 14
+  hidden_size: 192
+  depth: 12
+  heads: 3
+  mlp_dim: 768
+
+predictor:
+  _target_: models.world_model.ReleasedLeWMPredictor
+  history_size: 3
+  input_dim: 192
+  hidden_dim: 192
+  output_dim: 192
+  depth: 6
+  heads: 16
+  head_dim: 64
+  mlp_dim: 2048
+  dropout: 0.1
+  embedding_dropout: 0.0
+
+action_encoder:
+  _target_: models.world_model.ReleasedLeWMActionEncoder
+  input_dim: 10
+  smoothed_dim: 10
+  embedding_dim: 192
+  mlp_scale: 4
+
+projector:
+  _target_: models.world_model.ProjectionMLP
+  input_dim: 192
+  hidden_dim: 2048
+  output_dim: 192
+
+pred_proj:
+  _target_: models.world_model.ProjectionMLP
+  input_dim: 192
+  hidden_dim: 2048
+  output_dim: 192
