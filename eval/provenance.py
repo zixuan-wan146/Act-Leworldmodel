@@ -2,21 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from utils import file_sha256, is_sha256
-
-
-_GIT_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
-
-
-def validate_code_revision(value: object) -> str:
-    """Return one full lowercase Git commit or reject ambiguous provenance."""
-
-    if not isinstance(value, str) or _GIT_COMMIT_PATTERN.fullmatch(value) is None:
-        raise ValueError("evaluation code_revision must be a full lowercase Git commit")
-    return value
 
 
 def artifact_record(path: str | Path) -> dict[str, str]:

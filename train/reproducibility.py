@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from importlib.metadata import entry_points
 import os
 import random
 
 import lightning as pl
 import numpy as np
 import torch
+
+_LIGHTNING_CALLBACK_GROUPS = (
+    "lightning.pytorch.callbacks_factory",
+    "lightning.fabric.callbacks_factory",
+)
 
 
 def configure_reproducibility(seed: int) -> None:
@@ -28,3 +34,18 @@ def configure_reproducibility(seed: int) -> None:
 
 def make_generator(seed: int) -> torch.Generator:
     return torch.Generator().manual_seed(seed)
+
+
+def reject_external_lightning_callbacks() -> None:
+    """Refuse implicit callback plugins before Lightning can import them."""
+
+    discovered = []
+    for group in _LIGHTNING_CALLBACK_GROUPS:
+        for candidate in entry_points(group=group):
+            discovered.append(f"{group}:{candidate.name}={candidate.value}")
+    if discovered:
+        detail = ", ".join(sorted(discovered))
+        raise RuntimeError(
+            "external Lightning callback entry points are forbidden for isolated "
+            f"training: {detail}"
+        )

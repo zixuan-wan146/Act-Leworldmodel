@@ -1,24 +1,42 @@
 # Act-LeWorldModel
 
 Act-LeWorldModel compares three goal-conditioned Push-T controllers under one
-fixed evaluation protocol:
+paired temporal-horizon stress test:
 
-- **CEM**: the released LeWM model with online cross-entropy planning.
-- **GC-IDM**: a one-action amortized inverse-dynamics policy, replanned every
-  environment step.
-- **LARC**: a learned action-block policy trained with behavior cloning and a
-  differentiable frozen-world-model rollout-consistency loss.
+- **CEM** uses the released LeWM model with online cross-entropy planning.
+- **GC-IDM** predicts one raw action and replans every environment step.
+- **LARC** predicts action blocks with behavior cloning plus frozen-world-model
+  rollout consistency, then replans after one five-action block.
 
-The visual encoder and projector are reused from the released LeWM checkpoint.
-Every dataset frame is encoded once, then Fast-LeWM dynamics and both learned
-policies train from the same episode-separated latent cache.
+One H50 Fast-LeWM, one H50 GC-IDM, and one H50 LARC checkpoint are trained with
+seed `3072`. The same learned checkpoints are evaluated at goal offsets
+`25`, `35`, and `50` on 50 paired held-out tasks with evaluation seed
+`42`. The frozen protocol is in
+[docs/pusht_horizon_stress_test.md](docs/pusht_horizon_stress_test.md).
 
-## Environment and storage
+## Runtime boundary
 
-The project runtime is self-contained and does not import the reference
-submodule, `stable-worldmodel`, or `stable-pretraining`. Datasets, tensor-only
-weights, caches, logs, videos, and raw metrics belong outside the repository.
-Configure their roots before running an experiment:
+Project runtime code is self-contained. It does not import the reference
+submodule, `stable-worldmodel`, `stable-pretraining`, `jepa`, or the
+upstream `module` package. The reference checkout is read-only material for
+implementation comparison. Its virtual environment may be used as a Python
+environment; that does not make its source code a runtime dependency. A fresh
+subprocess test explicitly blocks all reference-package imports while loading
+every project entry point.
+
+When reusing an existing interpreter, only its base dependencies are reused.
+The `stable-worldmodel` and `stable-pretraining` distributions must not be
+installed. Training also rejects every external Lightning callback factory, so
+an environment plugin cannot silently inject reference code into a project
+run.
+
+The released LeWM checkpoint must use the portable tensor-only format described
+in [docs/checkpoint_format.md](docs/checkpoint_format.md). Models are rebuilt
+from project YAML and weights are loaded with `weights_only=True`.
+
+## Environment and external storage
+
+Set all large-artifact roots on the data disk:
 
 ```bash
 export PUSHT_DATASET_PATH=/data/datasets/pusht_expert_train.h5
@@ -29,42 +47,91 @@ export HF_HOME=/data/huggingface-cache
 export UV_CACHE_DIR=/data/uv-cache
 ```
 
-Install the locked project environment:
+Install the exact locked environment:
 
 ```bash
 uv sync --frozen --extra test
 ```
 
-The first four variables are required; `HF_HOME` and `UV_CACHE_DIR` keep
-library/build caches off the system disk. No project config contains a personal absolute path.
+No project config contains a personal absolute path. Datasets, caches,
+checkpoints, Lightning state, manifests, videos, and raw JSON metrics stay
+outside Git.
 
-`PUSHT_LEWM_WEIGHTS` must point to the project portable artifact described in
-[`docs/checkpoint_format.md`](docs/checkpoint_format.md). Legacy Python-object
-checkpoints are deliberately rejected: models are reconstructed from project
-YAML and only tensor state dictionaries are loaded with `weights_only=True`.
+## H50 data and action protocol
 
-## Push-T action protocol
+Every dataset frame is encoded once by the frozen released-LeWM
+encoder/projector. The frame cache stores only immutable dataset, split,
+representation, normalization, and latent lineage. Horizon settings are
+training views and are never persisted in the frame cache.
 
-Push-T exposes a two-dimensional action at each environment step. Fast-LeWM
-uses `frameskip=5`, so one dynamics action is a 10-dimensional block formed by
-normalizing and concatenating five raw actions.
+Push-T has a two-dimensional raw action. With `frameskip=5`, five normalized
+raw actions form one 10-dimensional model action block:
 
 ```text
-raw environment actions [B, 25, 2]
-    -> normalize with train-episode statistics
-    -> pack five consecutive actions
-world-model blocks      [B,  5, 10]
+raw actions       [B, 50, 2]
+  -> normalize with train-episode statistics
+  -> pack consecutive groups of five
+model action      [B, 10, 10]
+dense targets     at raw offsets 5, 10, ..., 50
 ```
 
-LARC predicts five such blocks, covering 25 environment steps, and executes
-five raw actions before replanning. GC-IDM predicts one normalized raw action
-and replans immediately. The conversion is centralized in
-`ActionBlockTransform`; block-shaped actions are never sent directly to the
-environment.
+GC-IDM receives strictly balanced deterministic targets at every raw offset
+from 1 through 50. LARC receives strictly balanced deterministic targets at
+block offsets 5 through 50; behavior loss is masked after the selected target
+offset.
+
+## Paired evaluation
+
+One version-2 manifest chooses 50 unique validation episodes and one start step
+per episode, all eligible for the maximum offset 50. Every method uses the same
+starts. Goals are taken from the same expert trajectory at `t+25`, `t+35`,
+and `t+50`.
+
+| Goal offset | CEM blocks | Raw-step budget |
+|---:|---:|---:|
+| 25 | 5 | 50 |
+| 35 | 7 | 70 |
+| 50 | 10 | 100 |
+
+CEM and LARC execute five raw actions before replanning. GC-IDM replans every
+raw action. Terminated rows never enter a planner. Results record per-task
+success, environment steps, planner calls, synchronized planning time, full
+closed-loop wall time, the evaluated commit, and SHA-256 records for every
+loaded artifact.
 
 ## Reproducible workflow
 
-The complete workflow is:
+Run all static checks and config composition first:
+
+```bash
+scripts/preflight.sh
+```
+
+After the pre-training gate in
+[docs/horizon_stress_progress.md](docs/horizon_stress_progress.md) is complete,
+run the production workflow from a clean committed worktree:
+
+```bash
+scripts/pusht_full.sh
+```
+
+The script performs cache validation/reuse, H50 Fast-LeWM training, ten-prefix
+open-loop evaluation, H50 GC-IDM and LARC training, all nine closed-loop runs,
+and the joint result summary. It refuses a dirty worktree and records
+`ACT_LEWM_CODE_REVISION`.
+
+## Resource tuning
+
+`loader.batch_size`, `loader.num_workers`, `loader.prefetch_factor`,
+precision, and related trainer values are operational settings in the YAML
+files. They are not benchmark variables, and no code enforces a GPU-memory
+minimum. The checked-in values are starting points for the current hardware.
+
+Before a production run, adjust these YAML values or pass Hydra overrides and
+repeat a one-step smoke. The resolved configuration and selected batch size are
+recorded with each trained artifact.
+
+Equivalent individual training commands are:
 
 ```bash
 python -m train.cache_latents
@@ -72,31 +139,21 @@ python -m train.train_world_model
 python -m eval.open_loop_curve
 python -m train.train_gc_idm
 python -m train.train_larc
-export ACT_LEWM_CODE_REVISION="$(git rev-parse HEAD)"
-python -m eval.closed_loop method=cem
-python -m eval.closed_loop method=gc_idm
-python -m eval.closed_loop method=larc
-python -m eval.summarize "$ACT_LEWM_RUN_ROOT/pusht/eval" results --seed 42
 ```
 
-The same sequence is available as `scripts/pusht_full.sh`. Every stage is
-configuration-driven and writes resumable checkpoints or deterministic cache
-metadata under the external roots.
-The full script refuses a dirty Git worktree and derives
-ACT_LEWM_CODE_REVISION automatically. Direct closed-loop commands must set it
-to the full evaluated commit. Result JSON files record that commit plus the
-SHA-256 of every loaded config, weight, and metadata artifact.
+For a closed-loop run, override the selected offset, proportional budget, and
+CEM horizon together. For example, O35 CEM is:
 
+```bash
+export ACT_LEWM_CODE_REVISION="$(git rev-parse HEAD)"
+python -m eval.closed_loop \
+  method=cem \
+  protocol.goal_offset=35 \
+  protocol.eval_budget=70 \
+  cem.horizon=7
+```
 
-New dynamics and policy training use seed `3072`. Whole episodes are split
-90/10 before their normalization or clip creation, so overlapping trajectory
-windows cannot cross the new train/validation boundary. The reused released
-LeWM representation and CEM checkpoint retain their upstream clip-level split
-provenance; see `docs/pusht_protocol.md`. Closed-loop evaluation uses seed
-`42`, 50 validation episodes, goal offset 25, and one shared manifest stored
-with the external raw metrics.
-
-## Tests
+## Verification
 
 ```bash
 python -m pytest -q
@@ -105,28 +162,19 @@ python -m ruff format --check .
 git diff --check
 ```
 
-Tests cover action packing, episode separation, cache indexing, causal masks,
-AdaLN-zero initialization, frozen parameter behavior, action gradients, and
-variable-horizon LARC losses. `scripts/phase0_smoke.sh` also validates that all
-Hydra configurations compose.
-Additional regression tests lock the nonzero-angle Push-T physics/rendering
-trajectory, terminated-row CEM random stream, checkpoint formats, evaluation
-artifact hashes, and cross-result provenance.
+Tests cover tensor-only checkpoints, episode-safe data views, strictly
+balanced H50 target coverage, dense-prefix shapes, masked LARC losses,
+terminated-row planning, nonzero-angle Push-T physics/rendering, paired
+manifest integrity, timing fields, artifact hashes, cross-offset result
+consistency, and reference-package import blocking.
 
-## Backbone API
+The final versioned report is generated as
+`results/RESULTS_pusht_horizon.md`; raw artifacts remain under
+`$ACT_LEWM_RUN_ROOT/pusht/horizon_h50/`.
 
-```python
-latents = model.encode_observations(pixels)
-future_latents = model.predict_latents(latents, action_blocks)
-```
+## Next benchmark
 
-`predict_latents` accepts arbitrary leading batch dimensions and returns one
-latent prediction for every causal action prefix. It is independent of CEM,
-goals, and controller state.
-
-Project design documents live under `docs/`. Versionable result summaries and
-figures live under `results/`; large artifacts remain outside the repository.
-
-The completed Push-T run, quantitative outcomes, interpretation, and
-limitations are documented in
-[`docs/experiment_outcome.md`](docs/experiment_outcome.md).
+Two-Room is queued only after the Push-T training, all nine evaluations, and
+final report are complete. It will receive a separate project-owned data,
+cache, environment, training, evaluation, and result pipeline; deleted stub
+configs are not treated as an implementation.

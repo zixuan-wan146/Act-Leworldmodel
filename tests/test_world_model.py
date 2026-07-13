@@ -56,11 +56,11 @@ def test_adaln_zero_predictor_starts_at_anchor():
     torch.testing.assert_close(predicted, anchor[:, None].expand_as(predicted))
 
 
-def test_dense_prefix_backward_without_sigreg():
+def test_dense_prefix_backward():
     predictions = torch.randn(2, 3, 4, requires_grad=True)
     targets = torch.randn_like(predictions)
-    objective = DensePrefixObjective(sigreg_weight=0.0)
-    loss = objective(predictions, targets, encoded_sequence=None)["loss"]
+    objective = DensePrefixObjective()
+    loss = objective(predictions, targets)["loss"]
     loss.backward()
     assert predictions.grad is not None
     assert torch.isfinite(predictions.grad).all()

@@ -2,9 +2,9 @@
 
 ## Status
 
-This document freezes the protocol before implementation or production
-training. It extends, rather than replaces, the completed 25-step experiment
-documented in `docs/pusht_protocol.md`.
+This document defines the sole production Push-T protocol in the repository.
+It replaces the earlier 25-step-only workflow and freezes the experiment before
+production training.
 
 The experiment measures how released-LeWM CEM, GC-IDM, and LARC change as the
 expert-trajectory goal moves from 25 to 35 and 50 raw environment steps into
@@ -45,6 +45,26 @@ Common settings:
 - all runtime code: project-owned; reference packages are not imported;
 - success criterion: the existing project Push-T goal-state criterion, unchanged.
 
+## Data split and released-checkpoint provenance
+
+The frame cache uses seed 3072 to split complete episodes 90/10 before any new
+training clip is constructed. Action statistics for Fast-LeWM, GC-IDM, and LARC
+come only from finite rows in the new training episodes. No new training window
+crosses the episode split.
+
+The frozen released-LeWM representation and the CEM baseline retain separate
+upstream provenance. Their source training procedure performed a 90/10 random
+split over already constructed clips and fitted normalization before that
+split. Some upstream clips may therefore originate from episodes assigned to
+this project's validation set. The 50 evaluation tasks are held out from the
+new Fast-LeWM and learned-policy training, but they cannot be claimed unseen by
+the released representation or released CEM dynamics.
+
+CEM uses full-source action statistics to match its released checkpoint.
+Fast-LeWM, GC-IDM, and LARC use the new train-episode statistics stored in the
+frame-cache lineage. Sharing one scaler across these differently trained
+artifacts would be incorrect.
+
 The proportional budgets preserve the released LeWM ratio of two allowed
 environment steps per expert goal-offset step. A fixed-budget stress test is
 out of scope for this stage.
@@ -56,9 +76,10 @@ evaluates the same artifacts at all three offsets. Separate H25 and H35 models
 would confound goal distance with model capacity, training data, and checkpoint
 selection.
 
-The completed H25 artifacts and results remain available as historical
-references. They are not mixed into the new paired result table, because the
-new manifest and CEM replanning schedule differ.
+Earlier H25-only artifacts are not valid inputs to this experiment because the
+training horizon, paired manifest, and CEM replanning schedule differ. They are
+removed only after verified H50 replacements exist, so cleanup cannot destroy
+the sole recoverable checkpoint mid-migration.
 
 ### Fast-LeWM-H50
 
@@ -89,6 +110,18 @@ new manifest and CEM replanning schedule differ.
 - the same checkpoint is evaluated at O25, O35, and O50.
 
 No BC-only or loss-weight ablation is part of this stage.
+
+## Resource configuration
+
+Training resource use is controlled only by ordinary YAML or Hydra parameters,
+including batch size, worker count, prefetching, precision, and trainer values.
+These are operational settings rather than benchmark variables, and no runtime
+check imposes a GPU-memory minimum.
+
+The checked-in values are starting points selected by one-step smokes on the
+current GPU. Before production they may be adjusted in configuration, after
+which the forward/backward smoke is repeated. The resolved configuration and
+selected batch size are recorded with every trained artifact.
 
 ## Frame cache and horizon views
 
@@ -177,18 +210,17 @@ Every offset and method reports:
 One task changes the success rate by two percentage points. Differences of one
 or two tasks must not be described as statistically established improvements.
 
-Timing excludes checkpoint loading, data loading, environment construction,
-and first-use CUDA initialization. It includes observation/goal encoding,
-controller inference or CEM optimization, and closed-loop execution. CUDA
-measurements require warm-up and synchronization at timing boundaries.
+End-to-end timing starts after checkpoint/data loading and evaluation-pool
+construction. It includes task-state initialization, first-use controller
+kernels, goal encoding, controller inference or CEM optimization, physics,
+rendering, and closed-loop bookkeeping. CUDA is synchronized at the total and
+per-replanning timing boundaries.
 
-The report distinguishes:
-
-- vectorized 50-task throughput; and
-- batch-size-one controller latency.
-
-It must disclose the controller batch size and number of replans. A speedup
-claim cannot be inferred from unsynchronized total runtime alone.
+Planning time covers observation preprocessing and the controller call. Because
+learned controllers plan active rows as one batch, per-row planning time is an
+amortized throughput measure, not batch-size-one latency. The report discloses
+controller batch behavior and planner-call counts; no speedup is inferred from
+unsynchronized wall time.
 
 Fast-LeWM additionally reports prefix-wise open-loop latent MSE at every
 5-step endpoint through 50, using the fixed validation subset.

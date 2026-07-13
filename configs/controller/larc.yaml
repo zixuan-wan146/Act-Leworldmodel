@@ -1,6 +1,0 @@
-name: larc
-commit_steps: 5
-requires_encoder: true
-requires_dynamics_during_training: true
-requires_dynamics_during_inference: false
-action_transform: required_for_normalized_actions

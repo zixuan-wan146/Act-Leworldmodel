@@ -17,7 +17,8 @@ from data import (
     with_horizon_view,
 )
 from train.policy_common import PolicyWeightsCheckpoint, configure_adamw, make_loaders
-from train.reproducibility import configure_reproducibility
+from train.reproducibility import configure_reproducibility, reject_external_lightning_callbacks
+from utils import validate_code_revision
 
 
 class GCIDMTrainingModule(pl.LightningModule):
@@ -57,7 +58,9 @@ class GCIDMTrainingModule(pl.LightningModule):
 
 
 def run(cfg: DictConfig) -> None:
+    reject_external_lightning_callbacks()
     configure_reproducibility(cfg.seed)
+    code_revision = validate_code_revision(str(cfg.code_revision))
     metadata = load_latent_metadata(cfg.latent_cache_dir)
     view_metadata = with_horizon_view(
         metadata,
@@ -99,11 +102,18 @@ def run(cfg: DictConfig) -> None:
     if cfg.wandb.enabled:
         logger = WandbLogger(**cfg.wandb.config)
         logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+    training_metadata = {
+        **view_metadata,
+        "method": "gc_idm",
+        "training_seed": int(cfg.seed),
+        "training_code_revision": code_revision,
+        "training_batch_size": int(cfg.loader.batch_size),
+    }
     callback = PolicyWeightsCheckpoint(
         output_dir=Path(cfg.output_dir),
         policy_config=cfg.policy,
         filename_prefix=cfg.output_model_name,
-        metadata={**view_metadata, "method": "gc_idm", "training_seed": int(cfg.seed)},
+        metadata=training_metadata,
         interval=cfg.checkpoint_interval,
     )
     lightning_checkpoint = ModelCheckpoint(

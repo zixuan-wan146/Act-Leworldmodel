@@ -1,25 +1,27 @@
+code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 defaults:
   - _self_
   - policy: larc_chunk
 
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/larc
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/larc
 output_model_name: larc_chunk
 seed: 3072
 checkpoint_interval: 5
 
 world_model:
-  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/model_config.yaml
-  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/fast_lewm_backbone_best.pt
+  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/model_config.yaml
+  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/fast_lewm_backbone_best.pt
 
 data:
   frameskip: 5
-  max_horizon: 5
+  max_horizon: 10
   max_train_samples: null
   max_validation_samples: 100000
 
 loader:
-  batch_size: 1024
+  batch_size: 26000
+  # Tune this starting point for the available GPU before a production run.
   num_workers: 6
   persistent_workers: true
   prefetch_factor: 3
@@ -51,7 +53,7 @@ wandb:
   config:
     entity: null
     project: act-leworldmodel
-    name: larc-pusht
+    name: larc-h50-pusht
 
 hydra:
   run:

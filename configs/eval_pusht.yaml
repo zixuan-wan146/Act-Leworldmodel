@@ -3,7 +3,8 @@ code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 device: cuda
 dataset_path: ${oc.env:PUSHT_DATASET_PATH}
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/eval
+experiment_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50
+output_dir: ${experiment_dir}/eval/offset_${protocol.goal_offset}
 
 environment:
   image_size: 224
@@ -13,13 +14,15 @@ protocol:
   seed: 42
   num_eval: 50
   goal_offset: 25
+  goal_offsets: [25, 35, 50]
+  budget_multiplier: 2
   eval_budget: 50
   video: false
-  manifest_path: ${output_dir}/protocol_seed_${protocol.seed}.json
+  manifest_path: ${experiment_dir}/eval/paired_manifest_seed_${protocol.seed}.json
 
 world_model:
-  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/model_config.yaml
-  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/fast_lewm_backbone_best.pt
+  config_path: ${experiment_dir}/world_model/model_config.yaml
+  weights_path: ${experiment_dir}/world_model/fast_lewm_backbone_best.pt
 
 cem:
   config_path: configs/released_lewm/pusht.yaml
@@ -30,18 +33,16 @@ cem:
   n_steps: 30
   topk: 30
   horizon: 5
-  receding_horizon: 5
-  history_len: 3
+  receding_horizon: 1
   action_block: 5
   warm_start: true
 
 gc_idm:
-  directory: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/gc_idm
+  directory: ${experiment_dir}/gc_idm
   weights: gc_idm_best.pt
-  commit_steps: 1
 
 larc:
-  directory: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/larc
+  directory: ${experiment_dir}/larc
   weights: larc_chunk_best.pt
   commit_steps: 5
 

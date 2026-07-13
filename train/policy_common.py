@@ -10,6 +10,8 @@ import torch
 from lightning.pytorch.callbacks import Callback
 from omegaconf import DictConfig, OmegaConf
 
+from data import collate_latent_batch
+
 
 class PolicyWeightsCheckpoint(Callback):
     """Save only the learned policy, never the frozen world model."""
@@ -105,6 +107,7 @@ def make_loaders(train_set, validation_set, cfg: DictConfig):
     train_loader = torch.utils.data.DataLoader(
         train_set,
         **cfg.loader,
+        collate_fn=collate_latent_batch,
         shuffle=True,
         drop_last=True,
         generator=generator,
@@ -112,6 +115,7 @@ def make_loaders(train_set, validation_set, cfg: DictConfig):
     validation_loader = torch.utils.data.DataLoader(
         validation_set,
         **cfg.loader,
+        collate_fn=collate_latent_batch,
         shuffle=False,
         drop_last=False,
     )

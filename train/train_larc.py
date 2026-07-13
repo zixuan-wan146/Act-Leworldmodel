@@ -19,7 +19,8 @@ from data import (
 )
 from models.world_model import load_frozen_world_model
 from train.policy_common import PolicyWeightsCheckpoint, configure_adamw, make_loaders
-from train.reproducibility import configure_reproducibility
+from train.reproducibility import configure_reproducibility, reject_external_lightning_callbacks
+from utils import validate_code_revision
 
 
 class LARCTrainingModule(pl.LightningModule):
@@ -80,7 +81,9 @@ class LARCTrainingModule(pl.LightningModule):
 
 
 def run(cfg: DictConfig) -> None:
+    reject_external_lightning_callbacks()
     configure_reproducibility(cfg.seed)
+    code_revision = validate_code_revision(str(cfg.code_revision))
     metadata = load_latent_metadata(cfg.latent_cache_dir)
     view_metadata = with_horizon_view(
         metadata,
@@ -120,6 +123,8 @@ def run(cfg: DictConfig) -> None:
         raise ValueError("latent cache and frozen world model use different encoders")
     if world_metadata["action_statistics"] != metadata["action_statistics"]:
         raise ValueError("latent cache and frozen world model use different action statistics")
+    if world_metadata.get("training_code_revision") != code_revision:
+        raise ValueError("frozen world model was trained from a different code revision")
     if train_dataset.chunk_size > world_model.max_horizon:
         raise ValueError("LARC chunk exceeds the frozen world-model horizon")
     if train_dataset.action_dim != world_model.backbone.dynamics.action_dim:
@@ -139,17 +144,20 @@ def run(cfg: DictConfig) -> None:
     if cfg.wandb.enabled:
         logger = WandbLogger(**cfg.wandb.config)
         logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+    training_metadata = {
+        **view_metadata,
+        "method": "larc",
+        "training_seed": int(cfg.seed),
+        "training_code_revision": code_revision,
+        "world_model_config": str(Path(cfg.world_model.config_path).resolve()),
+        "world_model_weights": str(Path(cfg.world_model.weights_path).resolve()),
+        "training_batch_size": int(cfg.loader.batch_size),
+    }
     callback = PolicyWeightsCheckpoint(
         output_dir=Path(cfg.output_dir),
         policy_config=cfg.policy,
         filename_prefix=cfg.output_model_name,
-        metadata={
-            **view_metadata,
-            "method": "larc",
-            "training_seed": int(cfg.seed),
-            "world_model_config": str(Path(cfg.world_model.config_path).resolve()),
-            "world_model_weights": str(Path(cfg.world_model.weights_path).resolve()),
-        },
+        metadata=training_metadata,
         interval=cfg.checkpoint_interval,
     )
     lightning_checkpoint = ModelCheckpoint(

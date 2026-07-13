@@ -1,9 +1,10 @@
+code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 defaults:
   - _self_
   - world_model@model: fast_lewm
 
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model
 output_model_name: fast_lewm_backbone
 
 source_model:
@@ -13,7 +14,7 @@ source_model:
 seed: 3072
 image_size: 224
 latent_dim: 192
-max_horizon: 5
+max_horizon: 10
 freeze_representation: true
 checkpoint_interval: 1
 
@@ -23,7 +24,8 @@ data:
   max_validation_samples: 100000
 
 loader:
-  batch_size: 1024
+  batch_size: 15000
+  # Tune this starting point for the available GPU before a production run.
   num_workers: 6
   persistent_workers: true
   prefetch_factor: 3
@@ -35,10 +37,7 @@ optimizer:
 
 objective:
   _target_: losses.DensePrefixObjective
-  # The reused encoder was already trained with SIGReg; cached latents are frozen.
-  sigreg_weight: 0.0
-  sigreg_knots: 17
-  sigreg_num_projections: 1024
+  # Cached targets are frozen; every one of the ten prefixes has equal weight.
 
 trainer:
   max_epochs: 10
@@ -56,7 +55,7 @@ wandb:
   config:
     entity: null
     project: act-leworldmodel
-    name: fast-lewm-pusht
+    name: fast-lewm-h50-pusht
 
 hydra:
   run:

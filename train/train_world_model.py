@@ -15,13 +15,18 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from data import (
     PushTLatentDynamicsDataset,
+    collate_latent_batch,
     load_latent_metadata,
     with_horizon_view,
 )
 from models.world_model import initialize_representation_from_lewm
 from models.world_model.artifacts import RELEASED_LEWM_KIND, load_portable_artifact
-from train.reproducibility import configure_reproducibility, make_generator
-from utils import file_sha256
+from train.reproducibility import (
+    configure_reproducibility,
+    make_generator,
+    reject_external_lightning_callbacks,
+)
+from utils import file_sha256, validate_code_revision
 
 
 class LatentDynamicsTrainingModule(pl.LightningModule):
@@ -37,7 +42,6 @@ class LatentDynamicsTrainingModule(pl.LightningModule):
         losses = self.objective(
             predictions=predictions,
             targets=batch["target_latents"],
-            encoded_sequence=None,
         )
         self.log_dict(
             {f"{stage}/{name}": value for name, value in losses.items()},
@@ -141,6 +145,7 @@ def _make_loader(dataset, cfg: DictConfig, *, shuffle: bool, seed: int):
     return torch.utils.data.DataLoader(
         dataset,
         **cfg.loader,
+        collate_fn=collate_latent_batch,
         shuffle=shuffle,
         drop_last=shuffle,
         generator=make_generator(seed),
@@ -148,7 +153,9 @@ def _make_loader(dataset, cfg: DictConfig, *, shuffle: bool, seed: int):
 
 
 def run(cfg: DictConfig) -> None:
+    reject_external_lightning_callbacks()
     configure_reproducibility(cfg.seed)
+    code_revision = validate_code_revision(str(cfg.code_revision))
     metadata = load_latent_metadata(cfg.latent_cache_dir)
     _, source_metadata = load_portable_artifact(
         cfg.source_model.weights_path,
@@ -220,16 +227,19 @@ def run(cfg: DictConfig) -> None:
     if cfg.wandb.enabled:
         logger = WandbLogger(**cfg.wandb.config)
         logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+    training_metadata = {
+        **view_metadata,
+        "training_seed": int(cfg.seed),
+        "training_code_revision": code_revision,
+        "freeze_representation": bool(cfg.freeze_representation),
+        "source_model_config": str(Path(cfg.source_model.config_path).resolve()),
+        "source_weights": str(Path(cfg.source_model.weights_path).resolve()),
+        "training_batch_size": int(cfg.loader.batch_size),
+    }
     portable = PortableWorldModelCheckpoint(
         output_dir=output_dir,
         model_config=cfg.model,
-        metadata={
-            **view_metadata,
-            "training_seed": int(cfg.seed),
-            "freeze_representation": bool(cfg.freeze_representation),
-            "source_model_config": str(Path(cfg.source_model.config_path).resolve()),
-            "source_weights": str(Path(cfg.source_model.weights_path).resolve()),
-        },
+        metadata=training_metadata,
         filename_prefix=cfg.output_model_name,
         interval=cfg.checkpoint_interval,
     )

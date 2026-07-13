@@ -14,13 +14,23 @@ import matplotlib.pyplot as plt
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from data import PushTLatentDynamicsDataset
+from data import PushTLatentDynamicsDataset, collate_latent_batch
+from eval.provenance import artifact_record, validate_artifact_records
 from models.world_model import load_frozen_world_model
 from train.reproducibility import configure_reproducibility, make_generator
+from utils import validate_code_revision
 
 
 def run(cfg: DictConfig) -> dict:
     configure_reproducibility(cfg.seed)
+    code_revision = validate_code_revision(str(cfg.code_revision))
+    world_config = Path(cfg.model.config_path)
+    artifacts = {
+        "latent_cache_metadata": artifact_record(Path(cfg.latent_cache_dir) / "metadata.json"),
+        "world_model_config": artifact_record(world_config),
+        "world_model_weights": artifact_record(cfg.model.weights_path),
+        "world_model_metadata": artifact_record(world_config.with_name("model_metadata.json")),
+    }
     dataset = PushTLatentDynamicsDataset(
         cfg.latent_cache_dir,
         "validation",
@@ -33,6 +43,7 @@ def run(cfg: DictConfig) -> dict:
         dataset,
         **cfg.loader,
         shuffle=False,
+        collate_fn=collate_latent_batch,
         drop_last=False,
         generator=make_generator(cfg.seed),
     )
@@ -61,12 +72,15 @@ def run(cfg: DictConfig) -> dict:
     mse = (squared_error / sample_count).tolist()
     persistence_mse = (anchor_error / sample_count).tolist()
     environment_steps = [dataset.frameskip * (index + 1) for index in range(dataset.max_horizon)]
+    validate_artifact_records(artifacts, verify_files=True)
     result = {
         "seed": int(cfg.seed),
         "num_samples": sample_count,
         "environment_steps": environment_steps,
         "fast_lewm_mse": mse,
         "persistence_mse": persistence_mse,
+        "code_revision": code_revision,
+        "artifacts": artifacts,
         "config": OmegaConf.to_container(cfg, resolve=True),
     }
     output_dir = Path(cfg.output_dir)

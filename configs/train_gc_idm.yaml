@@ -1,24 +1,27 @@
+code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 defaults:
   - _self_
   - policy: gc_idm
 
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/gc_idm
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/gc_idm
 output_model_name: gc_idm
 seed: 3072
 checkpoint_interval: 5
 
 data:
   frameskip: 5
-  max_horizon: 5
+  max_horizon: 10
   max_train_samples: null
   max_validation_samples: 100000
 
 loader:
-  batch_size: 2048
-  num_workers: 6
+  batch_size: 700000
+  # One update per epoch on the current corpus; tune for the available GPU.
+  # 100 epochs preserve roughly the prior run's total sample exposure.
+  num_workers: 1
   persistent_workers: true
-  prefetch_factor: 3
+  prefetch_factor: 1
   pin_memory: true
 
 optimizer:
@@ -29,7 +32,7 @@ objective:
   _target_: losses.GCIDMRegressionObjective
 
 trainer:
-  max_epochs: 50
+  max_epochs: 100
   devices: 1
   accelerator: gpu
   precision: bf16-mixed
@@ -44,7 +47,7 @@ wandb:
   config:
     entity: null
     project: act-leworldmodel
-    name: gc-idm-pusht
+    name: gc-idm-h50-pusht
 
 hydra:
   run:

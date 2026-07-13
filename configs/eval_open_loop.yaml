@@ -1,16 +1,17 @@
+code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/open_loop
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/open_loop
 seed: 42
 device: cuda
 max_samples: 100000
 
 data:
   frameskip: 5
-  max_horizon: 5
+  max_horizon: 10
 
 model:
-  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/model_config.yaml
-  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/fast_lewm_backbone_best.pt
+  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/model_config.yaml
+  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/fast_lewm_backbone_best.pt
 
 loader:
   batch_size: 2048

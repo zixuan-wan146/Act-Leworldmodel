@@ -1,5 +1,0 @@
-name: gc_idm
-replan_after: 1
-requires_encoder: true
-requires_dynamics: false
-action_transform: required_for_normalized_actions

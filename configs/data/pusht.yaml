@@ -1,7 +1,0 @@
-batch_size: 128
-dataset:
-  num_steps: ${eval:'${max_horizon} + 1'}
-  frameskip: 5
-  name: pusht_expert_train.lance
-  keys_to_load: [pixels, action, proprio, state]
-  keys_to_cache: [action, proprio, state]

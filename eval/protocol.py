@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 import json
 import os
 from pathlib import Path
@@ -22,13 +23,27 @@ def _integer_list(manifest: dict, key: str, expected_length: int) -> np.ndarray:
     return np.asarray(value, dtype=np.int64)
 
 
+def _normalize_goal_offsets(goal_offsets: Sequence[int]) -> np.ndarray:
+    if isinstance(goal_offsets, (str, bytes)) or not isinstance(goal_offsets, Sequence):
+        raise ValueError("goal_offsets must be a non-empty integer sequence")
+    values = list(goal_offsets)
+    if not values or any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        raise ValueError("goal_offsets must be a non-empty integer sequence")
+    offsets = np.asarray(values, dtype=np.int64)
+    if np.any(offsets < 1):
+        raise ValueError("goal_offsets must be positive")
+    if not np.array_equal(offsets, np.unique(offsets)):
+        raise ValueError("goal_offsets must be strictly increasing and unique")
+    return offsets
+
+
 def _validate_manifest_entries(
     manifest: dict,
     *,
     validation_episodes: np.ndarray,
     episode_lengths: np.ndarray,
     num_eval: int,
-    goal_offset: int,
+    max_goal_offset: int,
 ) -> None:
     episodes = _integer_list(manifest, "episode_indices", num_eval)
     starts = _integer_list(manifest, "start_steps", num_eval)
@@ -38,7 +53,7 @@ def _validate_manifest_entries(
         raise ValueError("evaluation manifest contains an out-of-range episode")
     if not np.isin(episodes, validation_episodes).all():
         raise ValueError("evaluation manifest contains a non-validation episode")
-    upper_bounds = episode_lengths[episodes] - goal_offset
+    upper_bounds = episode_lengths[episodes] - max_goal_offset
     if np.any(upper_bounds <= 0):
         raise ValueError("evaluation manifest contains an episode shorter than the goal offset")
     if np.any(starts < 0) or np.any(starts >= upper_bounds):
@@ -52,12 +67,14 @@ def create_or_load_manifest(
     output_path: str | Path,
     seed: int,
     num_eval: int,
-    goal_offset: int,
+    goal_offsets: Sequence[int],
 ) -> dict:
-    """Choose unique validation episodes and fixed starts once for all methods."""
+    """Choose paired validation starts once for every method and goal offset."""
 
-    if num_eval < 1 or goal_offset < 1:
-        raise ValueError("num_eval and goal_offset must be positive")
+    if num_eval < 1:
+        raise ValueError("num_eval must be positive")
+    offsets = _normalize_goal_offsets(goal_offsets)
+    max_goal_offset = int(offsets[-1])
     dataset_path = Path(dataset_path).resolve()
     output_path = Path(output_path)
     cache_metadata = load_latent_metadata(latent_cache_dir)
@@ -73,7 +90,7 @@ def create_or_load_manifest(
         raise ValueError("latent cache validation episode IDs must be a unique vector")
     validation_digest = hashlib.sha256(validation.astype("<i8", copy=False).tobytes()).hexdigest()
     expected = {
-        "version": 1,
+        "version": 2,
         "dataset_path": str(dataset_path),
         "dataset_size": dataset_stat.st_size,
         "dataset_mtime_ns": dataset_stat.st_mtime_ns,
@@ -83,7 +100,8 @@ def create_or_load_manifest(
         "validation_episode_ids_sha256": validation_digest,
         "evaluation_seed": int(seed),
         "num_eval": int(num_eval),
-        "goal_offset": int(goal_offset),
+        "goal_offsets": offsets.tolist(),
+        "max_goal_offset": max_goal_offset,
     }
     with h5py.File(dataset_path, "r", swmr=True) as dataset:
         lengths = dataset["ep_len"][:].astype(np.int64)
@@ -99,16 +117,16 @@ def create_or_load_manifest(
             validation_episodes=validation,
             episode_lengths=lengths,
             num_eval=num_eval,
-            goal_offset=goal_offset,
+            max_goal_offset=max_goal_offset,
         )
         return manifest
-    eligible = validation[lengths[validation] > goal_offset]
+    eligible = validation[lengths[validation] > max_goal_offset]
     if len(eligible) < num_eval:
         raise ValueError("not enough validation episodes for the evaluation protocol")
     rng = np.random.default_rng(seed)
     episodes = np.sort(rng.choice(eligible, num_eval, replace=False))
     starts = np.asarray(
-        [rng.integers(0, int(lengths[episode]) - goal_offset) for episode in episodes],
+        [rng.integers(0, int(lengths[episode]) - max_goal_offset) for episode in episodes],
         dtype=np.int64,
     )
     manifest = {
@@ -121,7 +139,7 @@ def create_or_load_manifest(
         validation_episodes=validation,
         episode_lengths=lengths,
         num_eval=num_eval,
-        goal_offset=goal_offset,
+        max_goal_offset=max_goal_offset,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".tmp")

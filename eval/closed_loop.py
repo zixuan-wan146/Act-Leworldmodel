@@ -27,16 +27,12 @@ from data import (
     preprocess_pusht_pixels,
 )
 from eval.protocol import create_or_load_manifest
-from eval.provenance import (
-    artifact_record,
-    validate_artifact_records,
-    validate_code_revision,
-)
+from eval.provenance import artifact_record, validate_artifact_records
 from eval.pusht_env import PushTEnv
 from models.world_model import load_frozen_world_model, load_released_lewm
 from models.world_model.artifacts import load_tensor_state_dict
 from train.reproducibility import configure_reproducibility
-from utils import file_sha256, is_sha256
+from utils import file_sha256, is_sha256, validate_code_revision
 
 
 FRAME_LINEAGE_FIELDS = (
@@ -57,8 +53,34 @@ FRAME_LINEAGE_FIELDS = (
     "action_statistics",
 )
 HORIZON_VIEW_FIELDS = ("frameskip", "max_horizon", "max_goal_offset")
-# Public compatibility alias used by artifact-construction tests and tools.
-LINEAGE_FIELDS = FRAME_LINEAGE_FIELDS + HORIZON_VIEW_FIELDS
+
+
+def _validate_evaluation_protocol(cfg: DictConfig, method: str) -> tuple[int, ...]:
+    goal_offsets = OmegaConf.to_container(cfg.protocol.goal_offsets, resolve=True)
+    if (
+        not isinstance(goal_offsets, list)
+        or not goal_offsets
+        or any(type(value) is not int or value < 1 for value in goal_offsets)
+        or goal_offsets != sorted(set(goal_offsets))
+    ):
+        raise ValueError("protocol goal_offsets must be positive, strictly increasing integers")
+    goal_offset = int(cfg.protocol.goal_offset)
+    if goal_offset not in goal_offsets:
+        raise ValueError("selected goal_offset is absent from protocol goal_offsets")
+    budget_multiplier = int(cfg.protocol.budget_multiplier)
+    if budget_multiplier < 1:
+        raise ValueError("protocol budget_multiplier must be positive")
+    if int(cfg.protocol.eval_budget) != budget_multiplier * goal_offset:
+        raise ValueError("eval_budget must equal budget_multiplier times goal_offset")
+    if method == "cem":
+        action_block = int(cfg.cem.action_block)
+        if action_block < 1 or goal_offset % action_block:
+            raise ValueError("CEM action_block must divide the selected goal_offset")
+        if int(cfg.cem.horizon) != goal_offset // action_block:
+            raise ValueError("CEM horizon does not cover the selected goal_offset")
+        if int(cfg.cem.receding_horizon) != 1:
+            raise ValueError("CEM must replan after one action block")
+    return tuple(goal_offsets)
 
 
 def _evaluation_artifacts(cfg: DictConfig, method: str) -> dict[str, dict[str, str]]:
@@ -130,12 +152,44 @@ class LearnedPushTPolicy:
         self._has_goal = False
         self._elapsed = None
         self._buffers = None
+        self._planner_calls = None
+        self._planning_batch_calls = 0
+        self._planning_elapsed_seconds = 0.0
+        self._goal_encoding_seconds = 0.0
 
     def set_env(self, env) -> None:
         self.env = env
         self._has_goal = False
         self._elapsed = np.zeros(env.num_envs, dtype=np.int64)
         self._buffers = [deque() for _ in range(env.num_envs)]
+        self._planner_calls = np.zeros(env.num_envs, dtype=np.int64)
+        self._planning_batch_calls = 0
+        self._planning_elapsed_seconds = 0.0
+        self._goal_encoding_seconds = 0.0
+
+    def synchronize(self) -> None:
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+
+    def timing_metrics(self) -> dict:
+        if self._planner_calls is None:
+            raise RuntimeError("policy must be attached to an environment")
+        row_calls = int(self._planner_calls.sum())
+        return {
+            "episode_planner_calls": self._planner_calls.tolist(),
+            "planning_batch_calls": self._planning_batch_calls,
+            "planning_row_calls": row_calls,
+            "planning_elapsed_seconds": self._planning_elapsed_seconds,
+            "mean_planning_seconds_per_batch": (
+                self._planning_elapsed_seconds / self._planning_batch_calls
+                if self._planning_batch_calls
+                else 0.0
+            ),
+            "mean_planning_seconds_per_row": (
+                self._planning_elapsed_seconds / row_calls if row_calls else 0.0
+            ),
+            "goal_encoding_seconds": self._goal_encoding_seconds,
+        }
 
     def _preprocess(self, pixels) -> torch.Tensor:
         array = np.asarray(pixels)
@@ -147,8 +201,8 @@ class LearnedPushTPolicy:
         if not rows.any():
             return
         self._elapsed[rows] = 0
-        for buffer in self._buffers:
-            buffer.clear()
+        for index in np.flatnonzero(rows):
+            self._buffers[index].clear()
         self._has_goal = False
 
     def get_action(self, info_dict: dict) -> np.ndarray:
@@ -159,8 +213,12 @@ class LearnedPushTPolicy:
         ).reshape(-1)
         self._reset_rows(needs_flush)
         if not self._has_goal:
+            self.synchronize()
+            started = time.perf_counter()
             with torch.inference_mode():
                 self.controller.reset(self._preprocess(info_dict["goal"]))
+            self.synchronize()
+            self._goal_encoding_seconds += time.perf_counter() - started
             self._has_goal = True
         terminated = np.asarray(
             info_dict.get("terminated", np.zeros(self.env.num_envs)), dtype=bool
@@ -181,11 +239,17 @@ class LearnedPushTPolicy:
                 )
                 indices = torch.from_numpy(rows).to(self.device)
                 remaining = torch.from_numpy(remaining_values[rows]).to(self.device)
+                self.synchronize()
+                started = time.perf_counter()
                 command = self.controller.act(
                     self._preprocess(np.asarray(info_dict["pixels"])[rows]),
                     remaining,
                     batch_indices=indices,
                 )
+                self.synchronize()
+                self._planning_elapsed_seconds += time.perf_counter() - started
+                self._planning_batch_calls += 1
+                self._planner_calls[rows] += 1
                 chunks = command.actions.float().cpu().numpy()
                 for chunk_index, env_index in enumerate(rows):
                     self._buffers[env_index].extend(chunks[chunk_index, : command.replan_after])
@@ -250,6 +314,7 @@ def _validate_learned_artifacts(
     method: str,
     training_seed: int,
     goal_offset: int,
+    code_revision: str,
 ) -> None:
     if policy_metadata.get("method") != method:
         raise ValueError("policy metadata method does not match requested evaluation method")
@@ -274,6 +339,10 @@ def _validate_learned_artifacts(
         raise ValueError("policy training seed does not match the evaluation protocol")
     if world_metadata.get("training_seed") != training_seed:
         raise ValueError("world-model training seed does not match the evaluation protocol")
+    if policy_metadata.get("training_code_revision") != code_revision:
+        raise ValueError("policy was trained from a different code revision")
+    if world_metadata.get("training_code_revision") != code_revision:
+        raise ValueError("world model was trained from a different code revision")
     if goal_offset > int(policy_metadata["max_goal_offset"]):
         raise ValueError("evaluation goal offset exceeds the policy training horizon")
 
@@ -298,6 +367,7 @@ def _load_learned_policy(cfg: DictConfig, method: str, cache_metadata: dict):
         method=method,
         training_seed=cfg.protocol.training_seed,
         goal_offset=cfg.protocol.goal_offset,
+        code_revision=str(cfg.code_revision),
     )
     stats = ActionStatistics.from_mapping(metadata["action_statistics"])
     mean, std = torch.tensor(stats.mean), torch.tensor(stats.std)
@@ -371,6 +441,7 @@ def _evaluate(
     goals = np.asarray(rows["goal_pixels"]).copy()
     alive = np.ones(pool.num_envs, dtype=bool)
     successes = np.zeros(pool.num_envs, dtype=bool)
+    environment_steps = np.zeros(pool.num_envs, dtype=np.int64)
     frames = [[pixels[index].copy()] for index in range(pool.num_envs)] if video_dir else None
     info = {
         "pixels": pixels[:, None],
@@ -380,6 +451,7 @@ def _evaluate(
     }
     for _ in range(eval_budget):
         actions = policy.get_action(info)
+        environment_steps[alive] += 1
         pixels, terminated = pool.step(actions, alive, pixels)
         successes |= terminated
         alive &= ~terminated
@@ -403,7 +475,8 @@ def _evaluate(
     return {
         "success_rate": float(successes.mean() * 100.0),
         "episode_successes": successes.tolist(),
-        "seeds": None,
+        "episode_environment_steps": environment_steps.tolist(),
+        **policy.timing_metrics(),
     }
 
 
@@ -412,6 +485,7 @@ def run(cfg: DictConfig) -> dict:
     method = str(cfg.method)
     if method not in ("cem", "gc_idm", "larc"):
         raise ValueError("method must be cem, gc_idm, or larc")
+    goal_offsets = _validate_evaluation_protocol(cfg, method)
     code_revision = validate_code_revision(str(cfg.code_revision))
     cache_metadata = load_latent_metadata(cfg.latent_cache_dir)
     artifacts = _evaluation_artifacts(cfg, method)
@@ -423,7 +497,7 @@ def run(cfg: DictConfig) -> dict:
         output_path=cfg.protocol.manifest_path,
         seed=cfg.protocol.seed,
         num_eval=cfg.protocol.num_eval,
-        goal_offset=cfg.protocol.goal_offset,
+        goal_offsets=goal_offsets,
     )
     manifest_path = Path(cfg.protocol.manifest_path).resolve()
     manifest_sha256 = file_sha256(manifest_path)
@@ -442,7 +516,8 @@ def run(cfg: DictConfig) -> dict:
         output_dir = Path(cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         video_dir = output_dir / f"{method}_videos" if cfg.protocol.video else None
-        started = time.time()
+        policy.synchronize()
+        started = time.perf_counter()
         try:
             metrics = _evaluate(
                 policy=policy,
@@ -451,6 +526,8 @@ def run(cfg: DictConfig) -> dict:
                 eval_budget=cfg.protocol.eval_budget,
                 video_dir=video_dir,
             )
+            policy.synchronize()
+            elapsed_seconds = time.perf_counter() - started
         finally:
             pool.close()
     if file_sha256(manifest_path) != manifest_sha256:
@@ -459,7 +536,7 @@ def run(cfg: DictConfig) -> dict:
     result = {
         "method": method,
         "metrics": metrics,
-        "elapsed_seconds": time.time() - started,
+        "elapsed_seconds": elapsed_seconds,
         "code_revision": code_revision,
         "manifest": str(manifest_path),
         "manifest_sha256": manifest_sha256,

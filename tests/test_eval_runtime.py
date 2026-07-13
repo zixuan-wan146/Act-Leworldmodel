@@ -11,7 +11,8 @@ import torch
 from controllers.base import ActionCommand
 from data.pusht_eval import PushTEvaluationDataset
 from eval.closed_loop import (
-    LINEAGE_FIELDS,
+    FRAME_LINEAGE_FIELDS,
+    HORIZON_VIEW_FIELDS,
     LearnedPushTPolicy,
     _validate_cem_source_artifacts,
     _validate_learned_artifacts,
@@ -70,6 +71,19 @@ def test_environment_goal_does_not_change_initial_physics_state():
     finally:
         first.close()
         second.close()
+
+
+def test_environment_reset_keeps_reference_physics_flush():
+    initial = np.array([100.0, 100.0, 400.0, 400.0, 0.7, 30.0, -40.0])
+    goal = initial.copy()
+    expected = initial.copy()
+    expected[:2] += initial[-2:] * 0.01
+    environment = PushTEnv(resolution=64)
+    try:
+        restored, _ = environment.reset(options={"state": initial, "goal_state": goal})
+        np.testing.assert_allclose(restored, expected, rtol=0.0, atol=1e-12)
+    finally:
+        environment.close()
 
 
 def test_environment_nonzero_angle_rollout_matches_golden_reference():
@@ -180,11 +194,23 @@ def test_policy_never_plans_terminated_environment_rows():
     assert controller.batch_indices == [[0, 2]]
     np.testing.assert_array_equal(actions[[0, 2]], np.zeros((2, 2), dtype=np.float32))
     assert np.isnan(actions[1]).all()
+    timing = policy.timing_metrics()
+    assert timing["episode_planner_calls"] == [1, 0, 1]
+    assert timing["planning_batch_calls"] == 1
+    assert timing["planning_row_calls"] == 2
+    assert timing["planning_elapsed_seconds"] >= 0.0
+    assert timing["goal_encoding_seconds"] >= 0.0
 
 
 def test_learned_policy_lineage_is_checked_against_evaluation_cache():
-    common = {field: 0 for field in LINEAGE_FIELDS}
-    common.update({"max_goal_offset": 25, "training_seed": 3072})
+    common = {field: 0 for field in FRAME_LINEAGE_FIELDS + HORIZON_VIEW_FIELDS}
+    common.update(
+        {
+            "max_goal_offset": 25,
+            "training_seed": 3072,
+            "training_code_revision": "a" * 40,
+        }
+    )
     policy = {**common, "method": "larc"}
     foreign_cache = {**common, "dataset_path": "different-dataset"}
 
@@ -196,6 +222,7 @@ def test_learned_policy_lineage_is_checked_against_evaluation_cache():
             method="larc",
             training_seed=3072,
             goal_offset=25,
+            code_revision="a" * 40,
         )
 
 
@@ -256,7 +283,7 @@ def test_corrupt_manifest_entries_are_rejected(tmp_path, field, value, message):
         output_path=manifest_path,
         seed=42,
         num_eval=2,
-        goal_offset=25,
+        goal_offsets=[25],
     )
     manifest[field] = value
     manifest_path.write_text(json.dumps(manifest))
@@ -268,5 +295,5 @@ def test_corrupt_manifest_entries_are_rejected(tmp_path, field, value, message):
             output_path=manifest_path,
             seed=42,
             num_eval=2,
-            goal_offset=25,
+            goal_offsets=[25],
         )

@@ -22,10 +22,10 @@ from utils import file_sha256
 
 
 CACHE_VERSION = 2
-LEGACY_CACHE_VERSION = 1
 _LATENT_FILENAME = "frame_latents.npy"
 _METADATA_FILENAME = "metadata.json"
-_LEGACY_VIEW_FIELDS = ("frameskip", "max_horizon", "max_goal_offset")
+_VALIDATION_SAMPLE_SEED_OFFSET = 1_000_003
+_POLICY_GOAL_SEED_OFFSET = 2_000_003
 
 
 @dataclass(frozen=True)
@@ -76,36 +76,14 @@ def _atomic_json_dump(payload: dict, path: Path) -> None:
     os.replace(temporary, path)
 
 
-def _normalize_cache_metadata(metadata: dict) -> dict:
-    version = metadata.get("version")
-    if version == CACHE_VERSION:
-        return metadata
-    if version != LEGACY_CACHE_VERSION:
-        raise ValueError(
-            f"unsupported latent cache version {version!r}; "
-            f"expected {LEGACY_CACHE_VERSION} or {CACHE_VERSION}"
-        )
-    try:
-        frameskip = int(metadata["frameskip"])
-        max_horizon = int(metadata["max_horizon"])
-        max_goal_offset = int(metadata["max_goal_offset"])
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError("legacy latent cache has an invalid horizon view") from error
-    if frameskip < 1 or max_horizon < 1 or max_goal_offset != frameskip * max_horizon:
-        raise ValueError("legacy latent-cache horizon fields are inconsistent")
-    normalized = {key: value for key, value in metadata.items() if key not in _LEGACY_VIEW_FIELDS}
-    normalized["version"] = CACHE_VERSION
-    normalized["legacy_default_view"] = {
-        "frameskip": frameskip,
-        "max_horizon": max_horizon,
-        "max_goal_offset": max_goal_offset,
-    }
-    return normalized
-
-
 def load_latent_metadata(cache_dir: str | Path) -> dict:
     path = Path(cache_dir) / _METADATA_FILENAME
-    metadata = _normalize_cache_metadata(json.loads(path.read_text()))
+    metadata = json.loads(path.read_text())
+    if metadata.get("version") != CACHE_VERSION:
+        raise ValueError(
+            f"unsupported latent cache version {metadata.get('version')!r}; "
+            f"expected {CACHE_VERSION}"
+        )
     latent_path = Path(cache_dir) / _LATENT_FILENAME
     if not latent_path.is_file():
         raise FileNotFoundError(latent_path)
@@ -266,10 +244,7 @@ def build_frame_latent_cache(
             seed=seed,
             train_fraction=train_fraction,
         )
-        persisted = json.loads(metadata_path.read_text())
-        if persisted != metadata or any(
-            metadata.get(key) != value for key, value in artifact_fields.items()
-        ):
+        if any(metadata.get(key) != value for key, value in artifact_fields.items()):
             metadata.update(artifact_fields)
             _atomic_json_dump(metadata, metadata_path)
         return metadata
@@ -379,6 +354,34 @@ def _deterministic_subsample(
     return values[np.sort(selected)]
 
 
+def _balanced_goal_bins(count: int, num_bins: int, seed: int) -> np.ndarray:
+    """Assign every goal bin deterministically with counts differing by at most one."""
+
+    if count < 1 or num_bins < 1:
+        raise ValueError("balanced goal assignment requires positive sizes")
+    bins = np.resize(np.arange(1, num_bins + 1, dtype=np.int64), count)
+    np.random.default_rng(seed).shuffle(bins)
+    return bins
+
+
+def collate_latent_batch(
+    batch: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Return one batch already vectorized by a latent dataset.
+
+    PyTorch calls Dataset.__getitems__ with all indices selected by a batch
+    sampler. The latent datasets gather those indices in NumPy once and return
+    stacked tensors directly, so applying default_collate again would be both
+    incorrect and needlessly expensive for production-sized batches.
+    """
+
+    if not isinstance(batch, dict) or not batch:
+        raise TypeError("latent batch must be a non-empty tensor mapping")
+    if not all(torch.is_tensor(value) for value in batch.values()):
+        raise TypeError("every latent batch value must be a tensor")
+    return batch
+
+
 class _PushTLatentDataset(Dataset):
     def __init__(
         self,
@@ -435,7 +438,7 @@ class _PushTLatentDataset(Dataset):
         if not pieces:
             raise ValueError(f"split {self.split!r} contains no clips with span {span}")
         starts = np.concatenate(pieces)
-        split_offset = 0 if self.split == "train" else 1_000_003
+        split_offset = 0 if self.split == "train" else _VALIDATION_SAMPLE_SEED_OFFSET
         return _deterministic_subsample(starts, self.max_samples, self.sample_seed + split_offset)
 
     def _normalize_actions(self, actions: np.ndarray) -> torch.Tensor:
@@ -482,7 +485,7 @@ class PushTLatentDynamicsDataset(_PushTLatentDataset):
             "action_blocks": action_blocks,
         }
 
-    def __getitems__(self, indices: list[int]) -> list[dict[str, torch.Tensor]]:
+    def __getitems__(self, indices: list[int]) -> dict[str, torch.Tensor]:
         """Vectorize memmap/action gathers for one DataLoader batch."""
 
         item_indices = np.asarray(indices, dtype=np.int64)
@@ -498,14 +501,11 @@ class PushTLatentDynamicsDataset(_PushTLatentDataset):
         action_blocks = torch.from_numpy(normalized.astype(np.float32)).reshape(
             len(starts), self.max_horizon, self.frameskip * self.raw_action_dim
         )
-        return [
-            {
-                "anchor_latent": anchors[row],
-                "target_latents": targets[row],
-                "action_blocks": action_blocks[row],
-            }
-            for row in range(len(starts))
-        ]
+        return {
+            "anchor_latent": anchors,
+            "target_latents": targets,
+            "action_blocks": action_blocks,
+        }
 
 
 class PushTLatentPolicyDataset(_PushTLatentDataset):
@@ -534,14 +534,14 @@ class PushTLatentPolicyDataset(_PushTLatentDataset):
             raise ValueError("method must be 'gc_idm' or 'larc'")
         self.method = method
         self.starts = self._eligible_starts(self.max_goal_offset)
-        with np.errstate(over="ignore"):
-            hashed = self.starts.astype(np.uint64) * np.uint64(6364136223846793005) + np.uint64(
-                sample_seed + 1442695040888963407
-            )
+        split_offset = 0 if split == "train" else _VALIDATION_SAMPLE_SEED_OFFSET
+        goal_seed = sample_seed + split_offset + _POLICY_GOAL_SEED_OFFSET
         if method == "gc_idm":
-            self.goal_offsets = (hashed % self.max_goal_offset + 1).astype(np.int64)
+            self.goal_offsets = _balanced_goal_bins(
+                len(self.starts), self.max_goal_offset, goal_seed
+            )
         else:
-            blocks = (hashed % self.max_horizon + 1).astype(np.int64)
+            blocks = _balanced_goal_bins(len(self.starts), self.max_horizon, goal_seed)
             self.goal_offsets = blocks * self.frameskip
 
     @property
@@ -577,7 +577,7 @@ class PushTLatentPolicyDataset(_PushTLatentDataset):
         output["action_mask"] = torch.arange(self.max_horizon) < valid_blocks
         return output
 
-    def __getitems__(self, indices: list[int]) -> list[dict[str, torch.Tensor]]:
+    def __getitems__(self, indices: list[int]) -> dict[str, torch.Tensor]:
         """Vectorize latent and action gathers for one policy batch."""
 
         item_indices = np.asarray(indices, dtype=np.int64)
@@ -589,15 +589,12 @@ class PushTLatentPolicyDataset(_PushTLatentDataset):
         if self.method == "gc_idm":
             normalized = (self.actions[starts] - self.action_mean) / self.action_std
             actions = torch.from_numpy(normalized.astype(np.float32))
-            return [
-                {
-                    "current_latent": current[row],
-                    "goal_latent": goals[row],
-                    "steps_remaining": steps[row],
-                    "action": actions[row],
-                }
-                for row in range(len(starts))
-            ]
+            return {
+                "current_latent": current,
+                "goal_latent": goals,
+                "steps_remaining": steps,
+                "action": actions,
+            }
 
         action_indices = starts[:, None] + np.arange(self.max_goal_offset, dtype=np.int64)[None]
         normalized = (self.actions[action_indices] - self.action_mean) / self.action_std
@@ -606,13 +603,10 @@ class PushTLatentPolicyDataset(_PushTLatentDataset):
         )
         valid_blocks = torch.from_numpy(goal_offsets // self.frameskip)
         masks = torch.arange(self.max_horizon)[None] < valid_blocks[:, None]
-        return [
-            {
-                "current_latent": current[row],
-                "goal_latent": goals[row],
-                "steps_remaining": steps[row],
-                "action_chunk": chunks[row],
-                "action_mask": masks[row],
-            }
-            for row in range(len(starts))
-        ]
+        return {
+            "current_latent": current,
+            "goal_latent": goals,
+            "steps_remaining": steps,
+            "action_chunk": chunks,
+            "action_mask": masks,
+        }

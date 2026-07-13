@@ -10,23 +10,25 @@ from data.pusht_latent import (
     PushTLatentDynamicsDataset,
     PushTLatentPolicyDataset,
     build_frame_latent_cache,
+    collate_latent_batch,
     split_episode_ids,
 )
 
 
-def _make_cache(tmp_path):
+def _make_cache(tmp_path, episode_length=31):
     dataset_path = tmp_path / "pusht.h5"
-    lengths = np.array([31, 31], dtype=np.int32)
-    offsets = np.array([0, 31], dtype=np.int64)
-    actions = np.arange(62 * 2, dtype=np.float32).reshape(62, 2)
+    lengths = np.array([episode_length, episode_length], dtype=np.int32)
+    offsets = np.array([0, episode_length], dtype=np.int64)
+    frame_count = 2 * episode_length
+    actions = np.arange(frame_count * 2, dtype=np.float32).reshape(frame_count, 2)
     with h5py.File(dataset_path, "w") as dataset:
         dataset.create_dataset("ep_len", data=lengths)
         dataset.create_dataset("ep_offset", data=offsets)
         dataset.create_dataset("action", data=actions)
-    latents = np.arange(62 * 4, dtype=np.float16).reshape(62, 4)
+    latents = np.arange(frame_count * 4, dtype=np.float16).reshape(frame_count, 4)
     np.save(tmp_path / "frame_latents.npy", latents)
     metadata = {
-        "version": 1,
+        "version": 2,
         "dataset_path": str(dataset_path),
         "dataset_size": dataset_path.stat().st_size,
         "dataset_mtime_ns": dataset_path.stat().st_mtime_ns,
@@ -38,13 +40,10 @@ def _make_cache(tmp_path):
         "validation_episode_ids": [1],
         "episode_lengths": lengths.tolist(),
         "episode_offsets": offsets.tolist(),
-        "frame_count": 62,
+        "frame_count": frame_count,
         "latent_dim": 4,
         "latent_dtype": "float16",
         "raw_action_dim": 2,
-        "frameskip": 5,
-        "max_horizon": 5,
-        "max_goal_offset": 25,
         "action_statistics": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
     }
     (tmp_path / "metadata.json").write_text(json.dumps(metadata))
@@ -73,10 +72,15 @@ def test_dense_dynamics_indices_and_action_blocks(tmp_path):
     )
     batched = dataset.__getitems__([0, 1])
     for key in sample:
-        torch.testing.assert_close(batched[0][key], sample[key])
+        torch.testing.assert_close(batched[key][0], sample[key])
+
+    loaded = next(
+        iter(torch.utils.data.DataLoader(dataset, batch_size=2, collate_fn=collate_latent_batch))
+    )
+    torch.testing.assert_close(loaded["target_latents"], batched["target_latents"])
 
 
-def test_horizon_view_is_not_fixed_by_legacy_cache_metadata(tmp_path):
+def test_horizon_view_is_not_stored_in_frame_cache_metadata(tmp_path):
     _, actions = _make_cache(tmp_path)
     dataset = PushTLatentDynamicsDataset(tmp_path, "train", frameskip=5, max_horizon=6)
     assert len(dataset) == 1
@@ -103,7 +107,7 @@ def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
     torch.testing.assert_close(sample["current_latent"], torch.from_numpy(latents[31]).float())
     larc_batched = larc.__getitems__([0, 1])
     for key in sample:
-        torch.testing.assert_close(larc_batched[0][key], sample[key])
+        torch.testing.assert_close(larc_batched[key][0], sample[key])
 
     gc_idm = PushTLatentPolicyDataset(
         tmp_path,
@@ -118,7 +122,36 @@ def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
     assert 1 <= gc_sample["steps_remaining"].item() <= 25
     gc_batched = gc_idm.__getitems__([0, 1])
     for key in gc_sample:
-        torch.testing.assert_close(gc_batched[0][key], gc_sample[key])
+        torch.testing.assert_close(gc_batched[key][0], gc_sample[key])
+
+
+def test_policy_goal_offsets_are_deterministic_and_strictly_balanced(tmp_path):
+    _make_cache(tmp_path, episode_length=101)
+    expected = {
+        "gc_idm": np.arange(1, 51),
+        "larc": np.arange(5, 51, 5),
+    }
+    for method, expected_offsets in expected.items():
+        first = PushTLatentPolicyDataset(
+            tmp_path,
+            "train",
+            method=method,
+            frameskip=5,
+            max_horizon=10,
+            sample_seed=3072,
+        )
+        second = PushTLatentPolicyDataset(
+            tmp_path,
+            "train",
+            method=method,
+            frameskip=5,
+            max_horizon=10,
+            sample_seed=3072,
+        )
+        np.testing.assert_array_equal(first.goal_offsets, second.goal_offsets)
+        offsets, counts = np.unique(first.goal_offsets, return_counts=True)
+        np.testing.assert_array_equal(offsets, expected_offsets)
+        assert counts.max() - counts.min() <= 1
 
 
 def _make_source_artifact(tmp_path):
@@ -159,7 +192,7 @@ def test_existing_cache_rejects_incompatible_protocol(tmp_path):
         )
 
 
-def test_existing_cache_migrates_metadata_without_reencoding(tmp_path, monkeypatch):
+def test_existing_cache_reuses_latents_without_reencoding(tmp_path, monkeypatch):
     config_path, weights_path = _make_source_artifact(tmp_path)
     latent_path = tmp_path / "frame_latents.npy"
     latent_sha256 = hashlib.sha256(latent_path.read_bytes()).hexdigest()
@@ -180,7 +213,5 @@ def test_existing_cache_migrates_metadata_without_reencoding(tmp_path, monkeypat
     )
 
     assert metadata["version"] == 2
-    assert metadata["legacy_default_view"]["max_goal_offset"] == 25
     assert "max_horizon" not in metadata
-    assert json.loads((tmp_path / "metadata.json").read_text()) == metadata
     assert hashlib.sha256(latent_path.read_bytes()).hexdigest() == latent_sha256

@@ -1,8 +1,0 @@
-name: cem
-baseline_only: true
-num_samples: 300
-n_steps: 30
-topk: 30
-horizon: 5
-receding_horizon: 5
-action_block: 5
