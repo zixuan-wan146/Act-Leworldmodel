@@ -39,8 +39,7 @@ from train.reproducibility import configure_reproducibility
 from utils import file_sha256, is_sha256
 
 
-LINEAGE_FIELDS = (
-    "version",
+FRAME_LINEAGE_FIELDS = (
     "dataset_path",
     "dataset_size",
     "dataset_mtime_ns",
@@ -52,14 +51,14 @@ LINEAGE_FIELDS = (
     "episode_lengths",
     "episode_offsets",
     "frame_count",
-    "frameskip",
-    "max_horizon",
-    "max_goal_offset",
     "latent_dim",
     "latent_dtype",
     "raw_action_dim",
     "action_statistics",
 )
+HORIZON_VIEW_FIELDS = ("frameskip", "max_horizon", "max_goal_offset")
+# Public compatibility alias used by artifact-construction tests and tools.
+LINEAGE_FIELDS = FRAME_LINEAGE_FIELDS + HORIZON_VIEW_FIELDS
 
 
 def _evaluation_artifacts(cfg: DictConfig, method: str) -> dict[str, dict[str, str]]:
@@ -254,18 +253,23 @@ def _validate_learned_artifacts(
 ) -> None:
     if policy_metadata.get("method") != method:
         raise ValueError("policy metadata method does not match requested evaluation method")
-    for field in LINEAGE_FIELDS:
+    for field in FRAME_LINEAGE_FIELDS:
         if field not in cache_metadata:
             raise ValueError(f"latent cache metadata is missing lineage field {field}")
     for artifact_name, artifact in (
         ("policy", policy_metadata),
         ("world model", world_metadata),
     ):
-        for field in LINEAGE_FIELDS:
+        for field in FRAME_LINEAGE_FIELDS:
             if field not in artifact:
                 raise ValueError(f"{artifact_name} metadata is missing lineage field {field}")
             if artifact[field] != cache_metadata[field]:
                 raise ValueError(f"{artifact_name} and latent cache have incompatible {field}")
+        for field in HORIZON_VIEW_FIELDS:
+            if field not in artifact:
+                raise ValueError(f"{artifact_name} metadata is missing horizon field {field}")
+            if artifact[field] != policy_metadata[field]:
+                raise ValueError(f"{artifact_name} and policy have incompatible {field}")
     if policy_metadata.get("training_seed") != training_seed:
         raise ValueError("policy training seed does not match the evaluation protocol")
     if world_metadata.get("training_seed") != training_seed:

@@ -1,5 +1,5 @@
-import json
 import hashlib
+import json
 
 import h5py
 import numpy as np
@@ -62,7 +62,7 @@ def test_episode_split_is_deterministic_and_disjoint():
 
 def test_dense_dynamics_indices_and_action_blocks(tmp_path):
     latents, actions = _make_cache(tmp_path)
-    dataset = PushTLatentDynamicsDataset(tmp_path, "train")
+    dataset = PushTLatentDynamicsDataset(tmp_path, "train", frameskip=5, max_horizon=5)
     assert len(dataset) == 6
     sample = dataset[0]
     torch.testing.assert_close(sample["anchor_latent"], torch.from_numpy(latents[0]).float())
@@ -76,9 +76,25 @@ def test_dense_dynamics_indices_and_action_blocks(tmp_path):
         torch.testing.assert_close(batched[0][key], sample[key])
 
 
+def test_horizon_view_is_not_fixed_by_legacy_cache_metadata(tmp_path):
+    _, actions = _make_cache(tmp_path)
+    dataset = PushTLatentDynamicsDataset(tmp_path, "train", frameskip=5, max_horizon=6)
+    assert len(dataset) == 1
+    torch.testing.assert_close(
+        dataset[0]["action_blocks"], torch.from_numpy(actions[:30]).reshape(6, 10)
+    )
+
+
 def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
     latents, _ = _make_cache(tmp_path)
-    larc = PushTLatentPolicyDataset(tmp_path, "validation", method="larc", sample_seed=11)
+    larc = PushTLatentPolicyDataset(
+        tmp_path,
+        "validation",
+        method="larc",
+        frameskip=5,
+        max_horizon=5,
+        sample_seed=11,
+    )
     sample = larc[0]
     assert sample["action_chunk"].shape == (5, 10)
     assert sample["action_mask"].shape == (5,)
@@ -89,7 +105,14 @@ def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
     for key in sample:
         torch.testing.assert_close(larc_batched[0][key], sample[key])
 
-    gc_idm = PushTLatentPolicyDataset(tmp_path, "train", method="gc_idm", sample_seed=11)
+    gc_idm = PushTLatentPolicyDataset(
+        tmp_path,
+        "train",
+        method="gc_idm",
+        frameskip=5,
+        max_horizon=5,
+        sample_seed=11,
+    )
     gc_sample = gc_idm[0]
     assert gc_sample["action"].shape == (2,)
     assert 1 <= gc_sample["steps_remaining"].item() <= 25
@@ -98,7 +121,7 @@ def test_policy_pairs_stay_inside_split_and_obey_block_protocol(tmp_path):
         torch.testing.assert_close(gc_batched[0][key], gc_sample[key])
 
 
-def test_existing_cache_rejects_incompatible_protocol(tmp_path):
+def _make_source_artifact(tmp_path):
     _make_cache(tmp_path)
     source_hash = hashlib.sha256(b"checkpoint").hexdigest()
     config_path = tmp_path / "source.yaml"
@@ -117,6 +140,11 @@ def test_existing_cache_rejects_incompatible_protocol(tmp_path):
     metadata = json.loads(metadata_path.read_text())
     metadata["source_checkpoint_sha256"] = source_hash
     metadata_path.write_text(json.dumps(metadata))
+    return config_path, weights_path
+
+
+def test_existing_cache_rejects_incompatible_protocol(tmp_path):
+    config_path, weights_path = _make_source_artifact(tmp_path)
 
     with pytest.raises(ValueError, match="incompatible seed"):
         build_frame_latent_cache(
@@ -126,8 +154,33 @@ def test_existing_cache_rejects_incompatible_protocol(tmp_path):
             output_dir=tmp_path,
             seed=4,
             train_fraction=0.5,
-            frameskip=5,
-            max_horizon=5,
             batch_size=1,
             device="cpu",
         )
+
+
+def test_existing_cache_migrates_metadata_without_reencoding(tmp_path, monkeypatch):
+    config_path, weights_path = _make_source_artifact(tmp_path)
+    latent_path = tmp_path / "frame_latents.npy"
+    latent_sha256 = hashlib.sha256(latent_path.read_bytes()).hexdigest()
+
+    def reject_encoder_load(*args, **kwargs):
+        raise AssertionError("cache reuse must not construct the encoder")
+
+    monkeypatch.setattr("data.pusht_latent.load_released_lewm", reject_encoder_load)
+    metadata = build_frame_latent_cache(
+        dataset_path=tmp_path / "pusht.h5",
+        source_config=config_path,
+        source_weights=weights_path,
+        output_dir=tmp_path,
+        seed=3,
+        train_fraction=0.5,
+        batch_size=1,
+        device="cpu",
+    )
+
+    assert metadata["version"] == 2
+    assert metadata["legacy_default_view"]["max_goal_offset"] == 25
+    assert "max_horizon" not in metadata
+    assert json.loads((tmp_path / "metadata.json").read_text()) == metadata
+    assert hashlib.sha256(latent_path.read_bytes()).hexdigest() == latent_sha256

@@ -7,8 +7,6 @@ source_model:
 
 seed: 3072
 train_fraction: 0.9
-frameskip: 5
-max_horizon: 5
 batch_size: 512
 device: cuda
 overwrite: false

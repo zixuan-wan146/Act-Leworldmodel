@@ -9,6 +9,8 @@ seed: 3072
 checkpoint_interval: 5
 
 data:
+  frameskip: 5
+  max_horizon: 5
   max_train_samples: null
   max_validation_samples: 100000
 

@@ -1,0 +1,13 @@
+defaults:
+  - train_world_model
+  - _self_
+
+max_horizon: 10
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model
+
+data:
+  frameskip: 5
+
+wandb:
+  config:
+    name: fast-lewm-h50-pusht

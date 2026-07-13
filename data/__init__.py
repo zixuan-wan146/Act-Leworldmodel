@@ -15,6 +15,7 @@ from data.pusht_latent import (
     load_latent_metadata,
     preprocess_pusht_pixels,
     split_episode_ids,
+    with_horizon_view,
 )
 from data.pusht_eval import PushTEvaluationDataset
 
@@ -32,4 +33,5 @@ __all__ = [
     "load_latent_metadata",
     "preprocess_pusht_pixels",
     "split_episode_ids",
+    "with_horizon_view",
 ]

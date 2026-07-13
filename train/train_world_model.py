@@ -13,7 +13,11 @@ from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from data import PushTLatentDynamicsDataset, load_latent_metadata
+from data import (
+    PushTLatentDynamicsDataset,
+    load_latent_metadata,
+    with_horizon_view,
+)
 from models.world_model import initialize_representation_from_lewm
 from models.world_model.artifacts import RELEASED_LEWM_KIND, load_portable_artifact
 from train.reproducibility import configure_reproducibility, make_generator
@@ -164,13 +168,16 @@ def run(cfg: DictConfig) -> None:
         raise ValueError("source model weights differ from the latent cache")
     if int(cfg.latent_dim) != int(metadata["latent_dim"]):
         raise ValueError("configured latent width differs from the latent cache")
-    if int(cfg.max_horizon) != int(metadata["max_horizon"]):
-        raise ValueError("configured horizon differs from the latent cache")
     if not cfg.freeze_representation:
         raise ValueError("cached-latent training requires a frozen representation")
+    view_metadata = with_horizon_view(
+        metadata,
+        frameskip=int(cfg.data.frameskip),
+        max_horizon=int(cfg.max_horizon),
+    )
     with open_dict(cfg):
         cfg.model.dynamics.prefix_encoder.action_dim = (
-            metadata["frameskip"] * metadata["raw_action_dim"]
+            view_metadata["frameskip"] * metadata["raw_action_dim"]
         )
         cfg.model.dynamics.prefix_encoder.latent_dim = metadata["latent_dim"]
         cfg.model.dynamics.predictor.latent_dim = metadata["latent_dim"]
@@ -178,12 +185,16 @@ def run(cfg: DictConfig) -> None:
     train_dataset = PushTLatentDynamicsDataset(
         cfg.latent_cache_dir,
         "train",
+        frameskip=view_metadata["frameskip"],
+        max_horizon=view_metadata["max_horizon"],
         max_samples=cfg.data.max_train_samples,
         sample_seed=cfg.seed,
     )
     validation_dataset = PushTLatentDynamicsDataset(
         cfg.latent_cache_dir,
         "validation",
+        frameskip=view_metadata["frameskip"],
+        max_horizon=view_metadata["max_horizon"],
         max_samples=cfg.data.max_validation_samples,
         sample_seed=cfg.seed,
     )
@@ -213,7 +224,7 @@ def run(cfg: DictConfig) -> None:
         output_dir=output_dir,
         model_config=cfg.model,
         metadata={
-            **metadata,
+            **view_metadata,
             "training_seed": int(cfg.seed),
             "freeze_representation": bool(cfg.freeze_representation),
             "source_model_config": str(Path(cfg.source_model.config_path).resolve()),

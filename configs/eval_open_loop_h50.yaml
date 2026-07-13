@@ -1,0 +1,13 @@
+defaults:
+  - eval_open_loop
+  - _self_
+
+output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/open_loop
+
+data:
+  frameskip: 5
+  max_horizon: 10
+
+model:
+  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/model_config.yaml
+  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/fast_lewm_backbone_best.pt

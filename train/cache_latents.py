@@ -20,8 +20,6 @@ def run(cfg: DictConfig) -> dict:
         output_dir=cfg.output_dir,
         seed=cfg.seed,
         train_fraction=cfg.train_fraction,
-        frameskip=cfg.frameskip,
-        max_horizon=cfg.max_horizon,
         batch_size=cfg.batch_size,
         device=cfg.device,
         overwrite=cfg.overwrite,

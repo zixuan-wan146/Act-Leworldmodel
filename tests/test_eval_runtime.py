@@ -239,7 +239,7 @@ def test_corrupt_manifest_entries_are_rejected(tmp_path, field, value, message):
     cache_dir.mkdir()
     np.save(cache_dir / "frame_latents.npy", np.zeros((1, 2), dtype=np.float16))
     metadata = {
-        "version": 1,
+        "version": 2,
         "dataset_path": str(dataset_path),
         "dataset_size": dataset_path.stat().st_size,
         "dataset_mtime_ns": dataset_path.stat().st_mtime_ns,

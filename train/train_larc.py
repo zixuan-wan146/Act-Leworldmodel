@@ -12,7 +12,11 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from data import PushTLatentPolicyDataset, load_latent_metadata
+from data import (
+    PushTLatentPolicyDataset,
+    load_latent_metadata,
+    with_horizon_view,
+)
 from models.world_model import load_frozen_world_model
 from train.policy_common import PolicyWeightsCheckpoint, configure_adamw, make_loaders
 from train.reproducibility import configure_reproducibility
@@ -78,10 +82,17 @@ class LARCTrainingModule(pl.LightningModule):
 def run(cfg: DictConfig) -> None:
     configure_reproducibility(cfg.seed)
     metadata = load_latent_metadata(cfg.latent_cache_dir)
+    view_metadata = with_horizon_view(
+        metadata,
+        frameskip=int(cfg.data.frameskip),
+        max_horizon=int(cfg.data.max_horizon),
+    )
     train_dataset = PushTLatentPolicyDataset(
         cfg.latent_cache_dir,
         "train",
         method="larc",
+        frameskip=view_metadata["frameskip"],
+        max_horizon=view_metadata["max_horizon"],
         max_samples=cfg.data.max_train_samples,
         sample_seed=cfg.seed,
     )
@@ -89,6 +100,8 @@ def run(cfg: DictConfig) -> None:
         cfg.latent_cache_dir,
         "validation",
         method="larc",
+        frameskip=view_metadata["frameskip"],
+        max_horizon=view_metadata["max_horizon"],
         max_samples=cfg.data.max_validation_samples,
         sample_seed=cfg.seed,
     )
@@ -131,7 +144,7 @@ def run(cfg: DictConfig) -> None:
         policy_config=cfg.policy,
         filename_prefix=cfg.output_model_name,
         metadata={
-            **metadata,
+            **view_metadata,
             "method": "larc",
             "training_seed": int(cfg.seed),
             "world_model_config": str(Path(cfg.world_model.config_path).resolve()),

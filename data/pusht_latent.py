@@ -21,9 +21,11 @@ from models.world_model.loading import load_released_lewm
 from utils import file_sha256
 
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
+LEGACY_CACHE_VERSION = 1
 _LATENT_FILENAME = "frame_latents.npy"
 _METADATA_FILENAME = "metadata.json"
+_LEGACY_VIEW_FIELDS = ("frameskip", "max_horizon", "max_goal_offset")
 
 
 @dataclass(frozen=True)
@@ -74,18 +76,55 @@ def _atomic_json_dump(payload: dict, path: Path) -> None:
     os.replace(temporary, path)
 
 
+def _normalize_cache_metadata(metadata: dict) -> dict:
+    version = metadata.get("version")
+    if version == CACHE_VERSION:
+        return metadata
+    if version != LEGACY_CACHE_VERSION:
+        raise ValueError(
+            f"unsupported latent cache version {version!r}; "
+            f"expected {LEGACY_CACHE_VERSION} or {CACHE_VERSION}"
+        )
+    try:
+        frameskip = int(metadata["frameskip"])
+        max_horizon = int(metadata["max_horizon"])
+        max_goal_offset = int(metadata["max_goal_offset"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("legacy latent cache has an invalid horizon view") from error
+    if frameskip < 1 or max_horizon < 1 or max_goal_offset != frameskip * max_horizon:
+        raise ValueError("legacy latent-cache horizon fields are inconsistent")
+    normalized = {key: value for key, value in metadata.items() if key not in _LEGACY_VIEW_FIELDS}
+    normalized["version"] = CACHE_VERSION
+    normalized["legacy_default_view"] = {
+        "frameskip": frameskip,
+        "max_horizon": max_horizon,
+        "max_goal_offset": max_goal_offset,
+    }
+    return normalized
+
+
 def load_latent_metadata(cache_dir: str | Path) -> dict:
     path = Path(cache_dir) / _METADATA_FILENAME
-    metadata = json.loads(path.read_text())
-    if metadata.get("version") != CACHE_VERSION:
-        raise ValueError(
-            f"unsupported latent cache version {metadata.get('version')!r}; "
-            f"expected {CACHE_VERSION}"
-        )
+    metadata = _normalize_cache_metadata(json.loads(path.read_text()))
     latent_path = Path(cache_dir) / _LATENT_FILENAME
     if not latent_path.is_file():
         raise FileNotFoundError(latent_path)
     return metadata
+
+
+def with_horizon_view(metadata: dict, *, frameskip: int, max_horizon: int) -> dict:
+    """Attach one action-horizon view to immutable frame-cache lineage."""
+
+    if isinstance(frameskip, bool) or not isinstance(frameskip, int) or frameskip < 1:
+        raise ValueError("frameskip must be a positive integer")
+    if isinstance(max_horizon, bool) or not isinstance(max_horizon, int) or max_horizon < 1:
+        raise ValueError("max_horizon must be a positive integer")
+    return {
+        **metadata,
+        "frameskip": frameskip,
+        "max_horizon": max_horizon,
+        "max_goal_offset": frameskip * max_horizon,
+    }
 
 
 def _validate_cache_request(
@@ -96,8 +135,6 @@ def _validate_cache_request(
     source_weights: Path,
     seed: int,
     train_fraction: float,
-    frameskip: int,
-    max_horizon: int,
 ) -> dict[str, str]:
     dataset_stat = dataset_path.stat()
     _, artifact_metadata = load_portable_artifact(
@@ -111,8 +148,6 @@ def _validate_cache_request(
         "source_checkpoint_sha256": artifact_metadata["source_checkpoint_sha256"],
         "seed": int(seed),
         "train_fraction": float(train_fraction),
-        "frameskip": int(frameskip),
-        "max_horizon": int(max_horizon),
     }
     for field, value in expected.items():
         if metadata.get(field) != value:
@@ -206,8 +241,6 @@ def build_frame_latent_cache(
     output_dir: str | Path,
     seed: int,
     train_fraction: float,
-    frameskip: int,
-    max_horizon: int,
     batch_size: int,
     device: str = "cuda",
     overwrite: bool = False,
@@ -216,8 +249,6 @@ def build_frame_latent_cache(
 
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
-    if frameskip < 1 or max_horizon < 1:
-        raise ValueError("frameskip and max_horizon must be positive")
     dataset_path = Path(dataset_path).resolve()
     source_config = Path(source_config).resolve()
     source_weights = Path(source_weights).resolve()
@@ -234,10 +265,11 @@ def build_frame_latent_cache(
             source_weights=source_weights,
             seed=seed,
             train_fraction=train_fraction,
-            frameskip=frameskip,
-            max_horizon=max_horizon,
         )
-        if any(metadata.get(key) != value for key, value in artifact_fields.items()):
+        persisted = json.loads(metadata_path.read_text())
+        if persisted != metadata or any(
+            metadata.get(key) != value for key, value in artifact_fields.items()
+        ):
             metadata.update(artifact_fields)
             _atomic_json_dump(metadata, metadata_path)
         return metadata
@@ -328,9 +360,6 @@ def build_frame_latent_cache(
         "latent_dim": latent_dim,
         "latent_dtype": "float16",
         "raw_action_dim": int(actions.shape[-1]),
-        "frameskip": int(frameskip),
-        "max_horizon": int(max_horizon),
-        "max_goal_offset": int(frameskip * max_horizon),
         "action_statistics": action_statistics.as_dict(),
     }
     _atomic_json_dump(metadata, metadata_path)
@@ -356,6 +385,8 @@ class _PushTLatentDataset(Dataset):
         cache_dir: str | Path,
         split: Literal["train", "validation"],
         *,
+        frameskip: int,
+        max_horizon: int,
         max_samples: int | None = None,
         sample_seed: int = 0,
     ) -> None:
@@ -364,6 +395,10 @@ class _PushTLatentDataset(Dataset):
             raise ValueError("split must be 'train' or 'validation'")
         self.cache_dir = Path(cache_dir)
         self.metadata = load_latent_metadata(self.cache_dir)
+        view = with_horizon_view({}, frameskip=frameskip, max_horizon=max_horizon)
+        self.frameskip = view["frameskip"]
+        self.max_horizon = view["max_horizon"]
+        self.max_goal_offset = view["max_goal_offset"]
         self.split = split
         self.latents = np.load(self.cache_dir / _LATENT_FILENAME, mmap_mode="r")
         dataset_path = Path(self.metadata["dataset_path"])
@@ -380,9 +415,6 @@ class _PushTLatentDataset(Dataset):
         statistics = ActionStatistics.from_mapping(self.metadata["action_statistics"])
         self.action_mean = np.asarray(statistics.mean, dtype=np.float32)
         self.action_std = np.asarray(statistics.std, dtype=np.float32)
-        self.frameskip = int(self.metadata["frameskip"])
-        self.max_horizon = int(self.metadata["max_horizon"])
-        self.max_goal_offset = int(self.metadata["max_goal_offset"])
         self.raw_action_dim = int(self.metadata["raw_action_dim"])
         self.latent_dim = int(self.metadata["latent_dim"])
         frame_count = int(self.metadata["frame_count"])
@@ -414,10 +446,21 @@ class _PushTLatentDataset(Dataset):
 class PushTLatentDynamicsDataset(_PushTLatentDataset):
     """Dense prefix targets backed by one latent per raw dataset frame."""
 
-    def __init__(self, cache_dir, split, *, max_samples=None, sample_seed=0) -> None:
+    def __init__(
+        self,
+        cache_dir,
+        split,
+        *,
+        frameskip: int,
+        max_horizon: int,
+        max_samples=None,
+        sample_seed=0,
+    ) -> None:
         super().__init__(
             cache_dir,
             split,
+            frameskip=frameskip,
+            max_horizon=max_horizon,
             max_samples=max_samples,
             sample_seed=sample_seed,
         )
@@ -474,12 +517,16 @@ class PushTLatentPolicyDataset(_PushTLatentDataset):
         split,
         *,
         method: Literal["gc_idm", "larc"],
+        frameskip: int,
+        max_horizon: int,
         max_samples=None,
         sample_seed=0,
     ) -> None:
         super().__init__(
             cache_dir,
             split,
+            frameskip=frameskip,
+            max_horizon=max_horizon,
             max_samples=max_samples,
             sample_seed=sample_seed,
         )

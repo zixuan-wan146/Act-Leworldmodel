@@ -24,6 +24,8 @@ def run(cfg: DictConfig) -> dict:
     dataset = PushTLatentDynamicsDataset(
         cfg.latent_cache_dir,
         "validation",
+        frameskip=cfg.data.frameskip,
+        max_horizon=cfg.data.max_horizon,
         max_samples=cfg.max_samples,
         sample_seed=cfg.seed,
     )

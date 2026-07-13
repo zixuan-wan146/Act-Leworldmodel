@@ -4,6 +4,10 @@ seed: 42
 device: cuda
 max_samples: 100000
 
+data:
+  frameskip: 5
+  max_horizon: 5
+
 model:
   config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/model_config.yaml
   weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/world_model/fast_lewm_backbone_best.pt
