@@ -6,10 +6,11 @@ safe serialization boundary.
 
 Runtime reconstruction has two independent inputs:
 
-1. `configs/released_lewm/pusht.yaml` declares the complete architecture using
-   modules owned by this repository.
-2. `PUSHT_LEWM_WEIGHTS` points to a tensor-only artifact loaded with
-   `torch.load(..., weights_only=True)`.
+1. `configs/released_lewm/pusht.yaml` declares the complete shared architecture
+   using modules owned by this repository. The historical filename is retained
+   because it is part of the completed Push-T artifact provenance.
+2. `PUSHT_LEWM_WEIGHTS` or `TWOROOM_LEWM_WEIGHTS` points to a task-specific
+   tensor-only artifact loaded with `torch.load(..., weights_only=True)`.
 
 The artifact is a mapping with this schema:
 
@@ -27,11 +28,16 @@ artifact was migrated. The latent cache, Fast-LeWM checkpoints, learned policy
 checkpoints, CEM model, and evaluation manifest all retain this value as their
 shared representation lineage.
 
-Migration from a legacy object is an offline artifact-publication operation. It
-must run in an isolated environment that owns and trusts the legacy classes;
-it is intentionally not part of this project's install or runtime. Published
-artifacts must be checked against the declared source SHA-256 and must strictly
-load into the project architecture before use.
+A released bare tensor state dict can be published reproducibly with
+`scripts/publish_released_lewm.py`. The command reads the source with
+`weights_only=True`, strictly loads it into the configured project model,
+writes atomically, reloads the portable artifact, and records the source and
+model-config hashes.
+
+Migration from a legacy Python object remains an offline operation in an isolated
+environment that owns and trusts its classes; project runtime never opens such
+an object. Every published artifact must strictly load into the declared project
+architecture before use.
 
 The production code rejects object modules, unexpected artifact kinds,
 unsupported format versions, missing lineage metadata, non-tensor state-dict

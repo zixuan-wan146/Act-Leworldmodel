@@ -1,10 +1,11 @@
-"""Validate and summarize the paired Push-T horizon-stress experiment."""
+"""Validate and summarize a paired trajectory horizon-stress experiment."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import re
 import shutil
 from pathlib import Path
 
@@ -229,6 +230,22 @@ def _single_record(results: list[dict], artifact_name: str) -> dict:
     return results[0]["artifacts"][artifact_name]
 
 
+def _shared_task_config(results: list[dict]) -> dict:
+    tasks = [result.get("config", {}).get("task") for result in results]
+    if any(not isinstance(task, dict) for task in tasks):
+        raise ValueError("closed-loop results do not declare resolved task configuration")
+    if len({_record_fingerprint(task) for task in tasks}) != 1:
+        raise ValueError("closed-loop result files do not share one task configuration")
+    task = tasks[0]
+    name = task.get("name")
+    label = task.get("label")
+    if not isinstance(name, str) or re.fullmatch(r"[a-z][a-z0-9_-]*", name) is None:
+        raise ValueError("task name must be a safe lowercase output identifier")
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError("task label must be a non-empty string")
+    return task
+
+
 def _validate_open_loop(
     open_loop_dir: Path,
     *,
@@ -237,11 +254,14 @@ def _validate_open_loop(
     max_goal_offset: int,
     action_block: int,
     shared_artifacts: dict[str, dict],
+    task_config: dict,
 ) -> dict:
     metrics_path = open_loop_dir / "open_loop_metrics.json"
     if not metrics_path.is_file():
         raise FileNotFoundError(metrics_path)
     payload = json.loads(metrics_path.read_text())
+    if payload.get("config", {}).get("task") != task_config:
+        raise ValueError("open-loop and closed-loop results use different task configuration")
     if payload.get("seed") != seed:
         raise ValueError("open-loop metrics use a different evaluation seed")
     if payload.get("code_revision") != code_revision:
@@ -295,7 +315,10 @@ def _wilson_interval(successes: int, total: int, z_score: float = 1.96) -> tuple
 
 
 def _plot_results(
-    results: dict[int, dict[str, dict]], goal_offsets: tuple[int, ...], output_dir: Path
+    results: dict[int, dict[str, dict]],
+    goal_offsets: tuple[int, ...],
+    output_dir: Path,
+    task_name: str,
 ) -> None:
     figure, axis = plt.subplots(figsize=(6.4, 4.2))
     for method in METHODS:
@@ -314,7 +337,7 @@ def _plot_results(
     axis.grid(alpha=0.3)
     axis.legend()
     figure.tight_layout()
-    figure.savefig(output_dir / "pusht_horizon_success.png", dpi=180)
+    figure.savefig(output_dir / f"{task_name}_horizon_success.png", dpi=180)
     plt.close(figure)
 
     figure, axis = plt.subplots(figsize=(6.4, 4.2))
@@ -338,7 +361,7 @@ def _plot_results(
     axis.grid(alpha=0.3, which="both")
     axis.legend()
     figure.tight_layout()
-    figure.savefig(output_dir / "pusht_horizon_time.png", dpi=180)
+    figure.savefig(output_dir / f"{task_name}_horizon_time.png", dpi=180)
     plt.close(figure)
 
 
@@ -374,6 +397,7 @@ def summarize(
         for offset in goal_offsets
     }
     flat_results = [results[offset][method] for offset in goal_offsets for method in METHODS]
+    task = _shared_task_config(flat_results)
 
     code_revisions = {result["code_revision"] for result in flat_results}
     if len(code_revisions) != 1:
@@ -446,12 +470,13 @@ def summarize(
             "latent_cache_metadata": cache_record,
             **world_records,
         },
+        task_config=task,
     )
-    _plot_results(results, goal_offsets, output_dir)
+    _plot_results(results, goal_offsets, output_dir, task["name"])
     shutil.copy2(open_loop_dir / "open_loop_curve.png", output_dir / "open_loop_curve.png")
 
     rows = [
-        "# Push-T horizon-stress results",
+        f"# {task['label']} horizon-stress results",
         "",
         f"Evaluation seed: `{seed}`. The same `{manifest['num_eval']}` held-out "
         "episode/start pairs are reused at every goal offset and by every method.",
@@ -510,9 +535,9 @@ def summarize(
     rows.extend(
         [
             "",
-            "![Success versus goal offset](pusht_horizon_success.png)",
+            f"![Success versus goal offset]({task['name']}_horizon_success.png)",
             "",
-            "![End-to-end time versus goal offset](pusht_horizon_time.png)",
+            f"![End-to-end time versus goal offset]({task['name']}_horizon_time.png)",
             "",
             "## Fast-LeWM open-loop validation",
             "",
@@ -557,7 +582,7 @@ def summarize(
             "",
         ]
     )
-    destination = output_dir / "RESULTS_pusht_horizon.md"
+    destination = output_dir / f"RESULTS_{task['name']}_horizon.md"
     destination.write_text("\n".join(rows))
     return destination
 

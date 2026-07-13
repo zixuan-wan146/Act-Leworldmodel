@@ -27,6 +27,8 @@ class ReferencePackageBlocker(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, ReferencePackageBlocker())
 entrypoints = (
     "train.cache_latents",
+    "models.world_model.publication",
+    "eval.tworoom_env",
     "train.train_world_model",
     "train.train_gc_idm",
     "train.train_larc",

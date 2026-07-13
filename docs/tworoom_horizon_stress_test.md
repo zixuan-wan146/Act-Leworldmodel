@@ -2,9 +2,9 @@
 
 ## Status
 
-This document freezes the Two-Room production protocol before implementation,
-cache construction, or training. It extends the completed Push-T temporal-horizon
-experiment without importing reference-project runtime code.
+This document freezes the Two-Room production protocol before cache construction
+or training. It extends the completed Push-T temporal-horizon experiment without
+importing reference-project runtime code.
 
 ## Research question
 
@@ -66,7 +66,7 @@ strictly loads into the project-owned ReleasedLeWM architecture with no missing
 or unexpected keys. Its SHA-256 is
 `566f223624ea4bfb39dbfe6ae731198dd6ea73b7b8919fed6b1ecafca810f7dd`.
 
-A portable artifact will be published from that tensor state dict using
+A portable artifact is published from that tensor state dict using
 `weights_only=True`, the shared explicit ReleasedLeWM YAML, strict construction,
 and source-hash metadata. The legacy Python-object checkpoint is not loaded.
 

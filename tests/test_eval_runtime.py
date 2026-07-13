@@ -13,7 +13,7 @@ from data.evaluation import TrajectoryEvaluationDataset
 from eval.closed_loop import (
     FRAME_LINEAGE_FIELDS,
     HORIZON_VIEW_FIELDS,
-    LearnedPushTPolicy,
+    LearnedPolicy,
     _validate_cem_source_artifacts,
     _validate_learned_artifacts,
 )
@@ -23,11 +23,11 @@ from utils import file_sha256
 
 
 def test_compressed_evaluation_dataset_reads_arbitrary_episode_order(tmp_path):
-    path = tmp_path / "pusht.h5"
+    path = tmp_path / "trajectory.h5"
     lengths = np.array([3, 4], dtype=np.int32)
     offsets = np.array([0, 3], dtype=np.int64)
     pixels = np.arange(7 * 4 * 4 * 3, dtype=np.uint8).reshape(7, 4, 4, 3)
-    states = np.arange(7 * 7, dtype=np.float32).reshape(7, 7)
+    states = np.arange(7 * 2, dtype=np.float32).reshape(7, 2)
     actions = np.arange(7 * 2, dtype=np.float32).reshape(7, 2)
     with h5py.File(path, "w") as dataset:
         dataset.create_dataset("ep_len", data=lengths)
@@ -37,13 +37,13 @@ def test_compressed_evaluation_dataset_reads_arbitrary_episode_order(tmp_path):
             data=pixels,
             **hdf5plugin.Blosc(cname="lz4", clevel=1, shuffle=hdf5plugin.Blosc.SHUFFLE),
         )
-        dataset.create_dataset("state", data=states)
+        dataset.create_dataset("proprio", data=states)
         dataset.create_dataset("action", data=actions)
 
     with TrajectoryEvaluationDataset(
         path,
-        state_key="state",
-        state_dim=7,
+        state_key="proprio",
+        state_dim=2,
         action_dim=2,
     ) as dataset:
         rows = dataset.evaluation_rows([1, 0], [0, 0], goal_offset=2)
@@ -173,7 +173,7 @@ class _RecordingController(torch.nn.Module):
 
 def test_policy_never_plans_terminated_environment_rows():
     controller = _RecordingController()
-    policy = LearnedPushTPolicy(
+    policy = LearnedPolicy(
         controller=controller,
         goal_offset=25,
         minimum_horizon=1,

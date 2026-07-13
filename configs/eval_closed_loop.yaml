@@ -1,16 +1,15 @@
+defaults:
+  - task: pusht
+  - _self_
+
 method: cem
 code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 device: cuda
-dataset_path: ${oc.env:PUSHT_DATASET_PATH}
-dataset_state_key: state
-dataset_state_dim: 7
-dataset_action_dim: 2
-latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-experiment_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50
+dataset_path: ${task.dataset_path}
+latent_cache_dir: ${task.latent_cache_dir}
+experiment_dir: ${task.experiment_dir}
 output_dir: ${experiment_dir}/eval/offset_${protocol.goal_offset}
-
-environment:
-  image_size: 224
+environment: ${task.environment}
 
 protocol:
   training_seed: 3072
@@ -28,8 +27,8 @@ world_model:
   weights_path: ${experiment_dir}/world_model/fast_lewm_backbone_best.pt
 
 cem:
-  config_path: configs/released_lewm/pusht.yaml
-  weights_path: ${oc.env:PUSHT_LEWM_WEIGHTS}
+  config_path: ${task.source_model.config_path}
+  weights_path: ${task.source_model.weights_path}
   batch_size: 1
   num_samples: 300
   var_scale: 1.0

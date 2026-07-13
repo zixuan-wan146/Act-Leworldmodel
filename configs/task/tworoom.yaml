@@ -1,0 +1,17 @@
+name: tworoom
+label: Two-Room
+dataset_path: ${oc.env:TWOROOM_DATASET_PATH}
+latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/tworoom/frame_latents
+experiment_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/tworoom/horizon_h50
+image_size: 224
+state_key: proprio
+state_dim: 2
+action_dim: 2
+
+source_model:
+  config_path: configs/released_lewm/pusht.yaml
+  weights_path: ${oc.env:TWOROOM_LEWM_WEIGHTS}
+
+environment:
+  _target_: eval.tworoom_env.TwoRoomEnv
+  resolution: ${task.image_size}

@@ -5,7 +5,7 @@ import torch
 
 from controllers.learned import LARCController
 from data import ActionBlockTransform
-from eval.closed_loop import LearnedPushTPolicy
+from eval.closed_loop import LearnedPolicy
 
 
 class _Encoder(torch.nn.Module):
@@ -34,7 +34,7 @@ def test_larc_adapter_commits_decoded_raw_actions_before_replanning():
         commit_steps=5,
         action_transform=ActionBlockTransform(torch.zeros(2), torch.ones(2), frameskip=5),
     )
-    adapter = LearnedPushTPolicy(
+    adapter = LearnedPolicy(
         controller=controller,
         goal_offset=25,
         minimum_horizon=5,
@@ -49,7 +49,6 @@ def test_larc_adapter_commits_decoded_raw_actions_before_replanning():
         SimpleNamespace(
             num_envs=1,
             single_action_space=space,
-            action_space=SimpleNamespace(shape=(1, 2)),
         )
     )
     image = np.zeros((1, 4, 4, 3), dtype=np.uint8)

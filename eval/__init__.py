@@ -1,1 +1,1 @@
-"""Deterministic Push-T evaluation protocols and entry points."""
+"""Deterministic trajectory evaluation protocols and entry points."""

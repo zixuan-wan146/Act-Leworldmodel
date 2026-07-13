@@ -1,18 +1,19 @@
-code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 defaults:
+  - task: pusht
   - _self_
   - world_model@model: fast_lewm
 
-latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model
+code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
+latent_cache_dir: ${task.latent_cache_dir}
+output_dir: ${task.experiment_dir}/world_model
 output_model_name: fast_lewm_backbone
 
 source_model:
-  config_path: configs/released_lewm/pusht.yaml
-  weights_path: ${oc.env:PUSHT_LEWM_WEIGHTS}
+  config_path: ${task.source_model.config_path}
+  weights_path: ${task.source_model.weights_path}
 
 seed: 3072
-image_size: 224
+image_size: ${task.image_size}
 latent_dim: 192
 max_horizon: 10
 freeze_representation: true
@@ -54,7 +55,7 @@ wandb:
   config:
     entity: null
     project: act-leworldmodel
-    name: fast-lewm-h50-pusht
+    name: fast-lewm-h50-${task.name}
 
 hydra:
   run:

@@ -1,6 +1,10 @@
+defaults:
+  - task: pusht
+  - _self_
+
 code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
-latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/open_loop
+latent_cache_dir: ${task.latent_cache_dir}
+output_dir: ${task.experiment_dir}/open_loop
 seed: 42
 device: cuda
 max_samples: 100000
@@ -10,8 +14,8 @@ data:
   max_horizon: 10
 
 model:
-  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/model_config.yaml
-  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/fast_lewm_backbone_best.pt
+  config_path: ${task.experiment_dir}/world_model/model_config.yaml
+  weights_path: ${task.experiment_dir}/world_model/fast_lewm_backbone_best.pt
 
 loader:
   batch_size: 2048

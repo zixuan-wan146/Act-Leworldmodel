@@ -1,7 +1,7 @@
 # Project Structure
 
 ```text
-configs/                    World-model, policy, training, and evaluation configs.
+configs/                    Task, model, training, and evaluation configs.
 controllers/baselines/      Evaluation-only search baselines such as CEM.
 controllers/learned/        Closed-loop GC-IDM and LARC controller wrappers.
 data/latent.py              Episode split, frame cache, and latent training datasets.
@@ -11,7 +11,7 @@ models/policies/            Trainable GC-IDM and LARC-Chunk networks.
 losses/world_model/         Dense prefix latent prediction objective.
 losses/policies/            GC-IDM regression and LARC rollout consistency.
 train/                      Separate world-model, GC-IDM, and LARC entry points.
-eval/                       Closed-loop, open-loop, and protocol evaluation.
+eval/                       Project environments, closed/open-loop, and protocol evaluation.
 scripts/                    Preflight and production experiment commands.
 tests/                      Unit and integration tests.
 utils/                      Dependency-free helpers shared across package layers.
@@ -35,7 +35,7 @@ third_party/                Read-only implementation references; never imported 
 an action sequence. It returns one predicted latent per action prefix and has
 no knowledge of goals, CEM, MPC, or policy state.
 
-The Push-T training path is:
+The shared trajectory training path is:
 
 ```text
 released LeWM encoder/projector

@@ -2,32 +2,40 @@
 
 ## Current state
 
-- Stage: protocol and asset audit complete; implementation not started.
+- Stage: project implementation complete; production gate validation in progress.
+- Production latent cache: not started.
 - Production training: not started.
 - Production evaluation: not started.
 - Active protocol: `docs/tworoom_horizon_stress_test.md`.
 
-## Verified inputs
+## Verified inputs and implementation
 
 - HDF5: 920,809 frames, 10,000 episodes, action/proprio width 2.
 - H50 training/validation anchors: 379,531 / 42,221.
-- Released tensor state: 303 tensors, strict project-model load passed.
+- Released tensor state: 303 tensors and 18,042,672 tensor values.
 - Released tensor SHA-256:
   `566f223624ea4bfb39dbfe6ae731198dd6ea73b7b8919fed6b1ecafca810f7dd`.
-- Legacy object checkpoint is present only as an obsolete external input and is
-  never loaded by project code.
-- Current data disk free space: about 157 GB; current GPU: 24 GB RTX 4090 D.
+- The portable artifact was published with `weights_only=True` and strictly
+  reloaded into the project-owned ReleasedLeWM definition.
+- Generic latent/cache, trajectory evaluation, training, open-loop, closed-loop,
+  summary, preflight, and production workflow entry points now select a task
+  through `configs/task/`.
+- The project-owned Two-Room environment exactly matched the stored reset frame,
+  next state, and next frame for 64 deterministic random dataset transitions,
+  in addition to fixed wall-collision goldens.
+- Runtime import tests block `stable_worldmodel`, `stable_pretraining`, `jepa`,
+  and the upstream `module` package.
 
-## Required implementation
+## Remaining production work
 
-- generic trajectory latent/cache and evaluation readers;
-- portable Two-Room released artifact publication;
-- project-owned fixed Two-Room environment with HDF5 golden tests;
-- shared task-configured training/open-loop/closed-loop entry points;
-- Two-Room task config, production workflow, manifest, and result summary;
-- full verification, production training/evaluation, cleanup, and local sync.
+1. finish the full production gate, including reduced-cost controller smokes;
+2. review normal YAML loader/batch parameters on the current 24 GB GPU;
+3. build the Two-Room frame-latent cache;
+4. train H50 Fast-LeWM, GC-IDM, and LARC once with seed 3072;
+5. run open-loop validation and all nine paired closed-loop evaluations;
+6. summarize results, clean redundant raw/recovery artifacts, and sync locally.
 
 ## Production gate
 
-Status: **not passed**. No Two-Room cache, learned checkpoint, or evaluation
-result exists yet.
+Status: **not yet passed**. No Two-Room learned checkpoint or evaluation result
+exists yet, so no Two-Room success-rate claim is currently valid.

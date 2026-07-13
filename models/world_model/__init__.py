@@ -12,6 +12,7 @@ from models.world_model.loading import (
 from models.world_model.parallel_predictor import ParallelLatentPredictor
 from models.world_model.prefix_encoder import ActionPrefixEncoder
 from models.world_model.projection import ProjectionMLP
+from models.world_model.publication import publish_released_lewm_artifact
 from models.world_model.released_lewm import (
     ReleasedLeWM,
     ReleasedLeWMActionEncoder,
@@ -29,6 +30,7 @@ __all__ = [
     "PrefixDynamics",
     "ProjectionMLP",
     "ReleasedLeWM",
+    "publish_released_lewm_artifact",
     "ReleasedLeWMActionEncoder",
     "ReleasedLeWMPredictor",
     "build_vit_encoder",

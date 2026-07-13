@@ -1,4 +1,4 @@
-"""CLI for the reusable Push-T frame-latent cache."""
+"""CLI for reusable frame-latent caches."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def run(cfg: DictConfig) -> dict:
     return metadata
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="cache_pusht_latents")
+@hydra.main(version_base=None, config_path="../configs", config_name="cache_latents")
 def main(cfg: DictConfig) -> None:
     run(cfg)
 

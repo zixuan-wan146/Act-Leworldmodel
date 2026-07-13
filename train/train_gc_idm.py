@@ -1,4 +1,4 @@
-"""Train GC-IDM on episode-separated Push-T frozen latents."""
+"""Train GC-IDM on episode-separated frozen latents."""
 
 from __future__ import annotations
 

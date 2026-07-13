@@ -1,16 +1,17 @@
-code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
 defaults:
+  - task: pusht
   - _self_
   - policy: larc_chunk
 
-latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
-output_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/larc
+code_revision: ${oc.env:ACT_LEWM_CODE_REVISION}
+latent_cache_dir: ${task.latent_cache_dir}
+output_dir: ${task.experiment_dir}/larc
 output_model_name: larc_chunk
 seed: 3072
 
 world_model:
-  config_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/model_config.yaml
-  weights_path: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50/world_model/fast_lewm_backbone_best.pt
+  config_path: ${task.experiment_dir}/world_model/model_config.yaml
+  weights_path: ${task.experiment_dir}/world_model/fast_lewm_backbone_best.pt
 
 data:
   frameskip: 5
@@ -34,7 +35,7 @@ objective:
   _target_: losses.LARCRolloutConsistencyObjective
   behavior_weight: 1.0
   consistency_weight: 1.0
-  frameskip: 5
+  frameskip: ${data.frameskip}
 
 trainer:
   max_epochs: 50
@@ -52,7 +53,7 @@ wandb:
   config:
     entity: null
     project: act-leworldmodel
-    name: larc-h50-pusht
+    name: larc-h50-${task.name}
 
 hydra:
   run:

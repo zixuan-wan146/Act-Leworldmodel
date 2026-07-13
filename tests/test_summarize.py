@@ -12,7 +12,8 @@ GOAL_OFFSETS = (25, 35, 50)
 CODE_REVISION = "a" * 40
 
 
-def _write_results(tmp_path):
+def _write_results(tmp_path, task_name="pusht", task_label="Push-T"):
+    task_config = {"name": task_name, "label": task_label}
     run_dir = tmp_path / "eval"
     open_loop_dir = tmp_path / "open_loop"
     output_dir = tmp_path / "results"
@@ -112,6 +113,7 @@ def _write_results(tmp_path):
                 "code_revision": CODE_REVISION,
                 "artifacts": method_artifacts[method],
                 "config": {
+                    "task": task_config,
                     "method": method,
                     "code_revision": CODE_REVISION,
                     "cem": {"action_block": 5},
@@ -143,7 +145,7 @@ def _write_results(tmp_path):
             "latent_cache_metadata": cache_metadata,
             **world_artifacts,
         },
-        "config": {},
+        "config": {"task": task_config},
     }
     (open_loop_dir / "open_loop_metrics.json").write_text(json.dumps(open_loop))
     (open_loop_dir / "open_loop_curve.png").write_bytes(b"figure")
@@ -168,6 +170,21 @@ def test_summary_includes_all_offsets_and_open_loop_results(tmp_path):
     assert (output_dir / "open_loop_curve.png").read_bytes() == b"figure"
     assert (output_dir / "pusht_horizon_success.png").is_file()
     assert (output_dir / "pusht_horizon_time.png").is_file()
+
+
+def test_summary_uses_resolved_task_name_and_label(tmp_path):
+    run_dir, open_loop_dir, output_dir = _write_results(
+        tmp_path,
+        task_name="tworoom",
+        task_label="Two-Room",
+    )
+
+    destination = summarize(run_dir, output_dir, seed=42, open_loop_dir=open_loop_dir)
+
+    assert destination.name == "RESULTS_tworoom_horizon.md"
+    assert destination.read_text().startswith("# Two-Room horizon-stress results")
+    assert (output_dir / "tworoom_horizon_success.png").is_file()
+    assert (output_dir / "tworoom_horizon_time.png").is_file()
 
 
 def test_summary_rejects_inconsistent_success_rate(tmp_path):
@@ -223,4 +240,16 @@ def test_summary_rejects_cross_revision_mixing(tmp_path):
     path.write_text(json.dumps(payload))
 
     with pytest.raises(ValueError, match="one code revision"):
+        summarize(run_dir, output_dir, seed=42, open_loop_dir=open_loop_dir)
+
+
+def test_summary_rejects_cross_task_mixing(tmp_path):
+    run_dir, open_loop_dir, output_dir = _write_results(tmp_path)
+    path = run_dir / "offset_35" / "gc_idm_seed_42.json"
+    payload = json.loads(path.read_text())
+    payload["config"]["task"]["name"] = "tworoom"
+    payload["config"]["task"]["label"] = "Two-Room"
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="one task configuration"):
         summarize(run_dir, output_dir, seed=42, open_loop_dir=open_loop_dir)

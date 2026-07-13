@@ -1,4 +1,4 @@
-"""Measure and plot Fast-LeWM dense-prefix error on held-out Push-T episodes."""
+"""Measure and plot Fast-LeWM dense-prefix error on held-out episodes."""
 
 from __future__ import annotations
 

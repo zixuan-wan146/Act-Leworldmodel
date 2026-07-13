@@ -1,0 +1,17 @@
+name: pusht
+label: Push-T
+dataset_path: ${oc.env:PUSHT_DATASET_PATH}
+latent_cache_dir: ${oc.env:ACT_LEWM_CACHE_ROOT}/pusht/frame_latents
+experiment_dir: ${oc.env:ACT_LEWM_RUN_ROOT}/pusht/horizon_h50
+image_size: 224
+state_key: state
+state_dim: 7
+action_dim: 2
+
+source_model:
+  config_path: configs/released_lewm/pusht.yaml
+  weights_path: ${oc.env:PUSHT_LEWM_WEIGHTS}
+
+environment:
+  _target_: eval.pusht_env.PushTEnv
+  resolution: ${task.image_size}

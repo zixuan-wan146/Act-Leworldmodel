@@ -1,0 +1,20 @@
+defaults:
+  - task: pusht
+  - _self_
+
+dataset_path: ${task.dataset_path}
+output_dir: ${task.latent_cache_dir}
+
+source_model:
+  config_path: ${task.source_model.config_path}
+  weights_path: ${task.source_model.weights_path}
+
+seed: 3072
+train_fraction: 0.9
+batch_size: 512
+device: cuda
+overwrite: false
+
+hydra:
+  run:
+    dir: ${output_dir}/hydra

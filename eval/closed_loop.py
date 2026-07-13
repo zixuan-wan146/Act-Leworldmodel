@@ -1,4 +1,4 @@
-"""Fixed-seed Push-T evaluation using only project-owned runtime components."""
+"""Fixed-seed trajectory evaluation using project-owned runtime components."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from pathlib import Path
 import hydra
 import numpy as np
 import torch
-from gymnasium.vector.utils import batch_space
 from omegaconf import DictConfig, OmegaConf
 
 from controllers import Controller
@@ -28,7 +27,6 @@ from data import (
 )
 from eval.protocol import create_or_load_manifest
 from eval.provenance import artifact_record, validate_artifact_records
-from eval.pusht_env import PushTEnv
 from models.world_model import load_frozen_world_model, load_released_lewm
 from models.world_model.artifacts import load_tensor_state_dict
 from train.reproducibility import configure_reproducibility
@@ -131,7 +129,7 @@ def _validate_cem_source_artifacts(cache_metadata: dict, cfg: DictConfig) -> Non
             raise ValueError(f"{label} differ from the latent-cache representation source")
 
 
-class LearnedPushTPolicy:
+class LearnedPolicy:
     """Adapt a project controller to the batched evaluation loop."""
 
     def __init__(
@@ -267,15 +265,21 @@ class LearnedPushTPolicy:
         return output
 
 
-class PushTEvaluationPool:
+class EvaluationPool:
     """Small selective-step pool for one fixed evaluation manifest."""
 
-    def __init__(self, count: int, resolution: int) -> None:
+    def __init__(
+        self,
+        count: int,
+        environment_config: DictConfig,
+        expected_action_dim: int,
+    ) -> None:
         if count < 1:
             raise ValueError("evaluation pool must contain at least one environment")
-        self.envs = [PushTEnv(resolution=resolution) for _ in range(count)]
+        self.envs = [hydra.utils.instantiate(environment_config) for _ in range(count)]
         self.single_action_space = self.envs[0].action_space
-        self.action_space = batch_space(self.single_action_space, count)
+        if self.single_action_space.shape != (expected_action_dim,):
+            raise ValueError("environment action width differs from the task configuration")
 
     @property
     def num_envs(self) -> int:
@@ -383,7 +387,7 @@ def _load_learned_policy(cfg: DictConfig, method: str, cache_metadata: dict):
             action_transform=transform,
         )
         minimum_horizon = metadata["frameskip"]
-    return LearnedPushTPolicy(
+    return LearnedPolicy(
         controller=controller,
         goal_offset=cfg.protocol.goal_offset,
         minimum_horizon=minimum_horizon,
@@ -419,7 +423,7 @@ def _load_cem_policy(
         seed=cfg.protocol.seed,
         warm_start=cfg.cem.warm_start,
     )
-    return LearnedPushTPolicy(
+    return LearnedPolicy(
         controller=CEMController(planner, commit_steps=planner.commit_steps),
         goal_offset=cfg.protocol.goal_offset,
         minimum_horizon=cfg.cem.action_block,
@@ -429,8 +433,8 @@ def _load_cem_policy(
 
 def _evaluate(
     *,
-    policy: LearnedPushTPolicy,
-    pool: PushTEvaluationPool,
+    policy: LearnedPolicy,
+    pool: EvaluationPool,
     rows: dict[str, np.ndarray],
     eval_budget: int,
     video_dir: Path | None,
@@ -503,9 +507,9 @@ def run(cfg: DictConfig) -> dict:
     manifest_sha256 = file_sha256(manifest_path)
     with TrajectoryEvaluationDataset(
         cfg.dataset_path,
-        state_key=cfg.dataset_state_key,
-        state_dim=cfg.dataset_state_dim,
-        action_dim=cfg.dataset_action_dim,
+        state_key=cfg.task.state_key,
+        state_dim=cfg.task.state_dim,
+        action_dim=cfg.task.action_dim,
     ) as dataset:
         rows = dataset.evaluation_rows(
             manifest["episode_indices"],
@@ -517,7 +521,11 @@ def run(cfg: DictConfig) -> dict:
             if method == "cem"
             else _load_learned_policy(cfg, method, cache_metadata)
         )
-        pool = PushTEvaluationPool(cfg.protocol.num_eval, cfg.environment.image_size)
+        pool = EvaluationPool(
+            cfg.protocol.num_eval,
+            cfg.environment,
+            expected_action_dim=cfg.task.action_dim,
+        )
         output_dir = Path(cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         video_dir = output_dir / f"{method}_videos" if cfg.protocol.video else None
@@ -556,7 +564,7 @@ def run(cfg: DictConfig) -> dict:
     return result
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="eval_pusht")
+@hydra.main(version_base=None, config_path="../configs", config_name="eval_closed_loop")
 def main(cfg: DictConfig) -> None:
     run(cfg)
 

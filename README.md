@@ -1,7 +1,7 @@
 # Act-LeWorldModel
 
-Act-LeWorldModel compares three goal-conditioned Push-T controllers under one
-paired temporal-horizon stress test:
+Act-LeWorldModel compares three goal-conditioned controllers under paired
+temporal-horizon stress tests on Push-T and Two-Room:
 
 - **CEM** uses the released LeWM model with online cross-entropy planning.
 - **GC-IDM** predicts one raw action and replans every environment step.
@@ -26,6 +26,12 @@ See the [full result report](results/RESULTS_pusht_horizon.md) and
 [experiment outcome](docs/horizon_stress_outcome.md) for paired differences,
 Wilson intervals, timing, open-loop error, provenance, and limitations. This is
 a temporal-offset goal-conditioned benchmark, not classic fixed-target Push-T.
+
+The Two-Room implementation now shares the same data, training, open-loop, and
+closed-loop pipeline while using its own released representation, cache, paired
+manifest, and project-owned environment. Its production cache, training, and
+evaluation have not yet been run. The frozen protocol is in
+[docs/tworoom_horizon_stress_test.md](docs/tworoom_horizon_stress_test.md).
 
 ## Runtime boundary
 
@@ -54,6 +60,8 @@ Set all large-artifact roots on the data disk:
 ```bash
 export PUSHT_DATASET_PATH=/data/datasets/pusht_expert_train.h5
 export PUSHT_LEWM_WEIGHTS=/data/checkpoints/pusht/released_lewm_state.pt
+export TWOROOM_DATASET_PATH=/data/datasets/tworoom.h5
+export TWOROOM_LEWM_WEIGHTS=/data/checkpoints/tworoom/released_lewm_state.pt
 export ACT_LEWM_CACHE_ROOT=/data/act-lewm-cache
 export ACT_LEWM_RUN_ROOT=/data/act-lewm-runs
 export HF_HOME=/data/huggingface-cache
@@ -77,8 +85,8 @@ encoder/projector. The frame cache stores only immutable dataset, split,
 representation, normalization, and latent lineage. Horizon settings are
 training views and are never persisted in the frame cache.
 
-Push-T has a two-dimensional raw action. With `frameskip=5`, five normalized
-raw actions form one 10-dimensional model action block:
+Both active tasks have a two-dimensional raw action. With `frameskip=5`, five
+normalized raw actions form one 10-dimensional model action block:
 
 ```text
 raw actions       [B, 50, 2]
@@ -114,18 +122,29 @@ loaded artifact.
 
 ## Reproducible workflow
 
-Run all static checks and config composition first:
+Run all static checks and config composition for the selected task first:
 
 ```bash
-scripts/preflight.sh
+scripts/preflight.sh pusht
+scripts/preflight.sh tworoom
 ```
 
-After the pre-training gate in
-[docs/horizon_stress_progress.md](docs/horizon_stress_progress.md) is complete,
-run the production workflow from a clean committed worktree:
+After the relevant pre-training gate is complete, run one production workflow
+from a clean committed worktree:
 
 ```bash
-scripts/pusht_full.sh
+scripts/horizon_full.sh pusht
+scripts/horizon_full.sh tworoom
+```
+
+Before the first Two-Room cache build, publish the official bare tensor state
+dict into the project artifact schema:
+
+```bash
+python scripts/publish_released_lewm.py \
+  configs/released_lewm/pusht.yaml \
+  /data/source/tworoom/weights.pt \
+  "$TWOROOM_LEWM_WEIGHTS"
 ```
 
 The script performs cache validation/reuse, H50 Fast-LeWM training, ten-prefix
@@ -147,11 +166,11 @@ recorded with each trained artifact.
 Equivalent individual training commands are:
 
 ```bash
-python -m train.cache_latents
-python -m train.train_world_model
-python -m eval.open_loop_curve
-python -m train.train_gc_idm
-python -m train.train_larc
+python -m train.cache_latents task=tworoom
+python -m train.train_world_model task=tworoom
+python -m eval.open_loop_curve task=tworoom
+python -m train.train_gc_idm task=tworoom
+python -m train.train_larc task=tworoom
 ```
 
 For a closed-loop run, override the selected offset, proportional budget, and
@@ -160,6 +179,7 @@ CEM horizon together. For example, O35 CEM is:
 ```bash
 export ACT_LEWM_CODE_REVISION="$(git rev-parse HEAD)"
 python -m eval.closed_loop \
+  task=pusht \
   method=cem \
   protocol.goal_offset=35 \
   protocol.eval_budget=70 \
@@ -177,18 +197,20 @@ git diff --check
 
 Tests cover tensor-only checkpoints, episode-safe data views, strictly
 balanced H50 target coverage, dense-prefix shapes, masked LARC losses,
-terminated-row planning, nonzero-angle Push-T physics/rendering, paired
-manifest integrity, timing fields, artifact hashes, cross-offset result
-consistency, and reference-package import blocking.
+terminated-row planning, Push-T physics/rendering, exact Two-Room dataset
+rendering and collisions, task-config composition, paired manifest integrity,
+timing fields, artifact hashes, cross-offset result consistency, and
+reference-package import blocking.
 
 The final versioned report is
 `results/RESULTS_pusht_horizon.md`, with the interpretation in
 `docs/horizon_stress_outcome.md`. Minimal raw artifacts remain under
 `$ACT_LEWM_RUN_ROOT/pusht/horizon_h50/`.
 
-## Next benchmark
+## Current next phase
 
-Push-T is complete. Two-Room is the next phase and has not started. It requires
-a separate project-owned data reader/cache, portable checkpoint, environment,
-training, evaluation, and result pipeline; a placeholder config is not counted
-as implementation.
+Push-T is complete. Two-Room protocol and asset audits, the shared task-configured
+pipeline, tensor-only artifact publication, and the project environment are
+implemented. Production cache construction, model training, evaluation, result
+generation, and final artifact cleanup remain. Current status is tracked in
+[docs/tworoom_progress.md](docs/tworoom_progress.md).

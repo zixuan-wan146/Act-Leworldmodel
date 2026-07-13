@@ -1,4 +1,4 @@
-"""Fixed, reusable episode/start manifests for fair Push-T comparison."""
+"""Fixed, reusable episode/start manifests for fair trajectory comparison."""
 
 from __future__ import annotations
 
