@@ -332,9 +332,10 @@ def _plot_results(
             label=METHOD_LABELS[method],
         )
     axis.set_xlabel("Goal offset (environment steps)")
-    axis.set_ylabel("Amortized end-to-end time (s/task)")
+    axis.set_ylabel("Amortized end-to-end time (s/task, log scale)")
+    axis.set_yscale("log")
     axis.set_xticks(goal_offsets)
-    axis.grid(alpha=0.3)
+    axis.grid(alpha=0.3, which="both")
     axis.legend()
     figure.tight_layout()
     figure.savefig(output_dir / "pusht_horizon_time.png", dpi=180)

@@ -2,11 +2,11 @@
 
 ## Current state
 
-- Stage: pre-training gate passed; ready for production from the reviewed commit.
-- Formal production training: not started.
-- Production evaluation: not started.
+- Stage: production training, evaluation, report generation, and cleanup complete.
+- Production revision: `01eccc3ccafba8c1eae140d504ad8abe523484f0`.
+- Formal production training and all nine closed-loop runs: complete.
+- Final report: `results/RESULTS_pusht_horizon.md`.
 - Active protocol: `docs/pusht_horizon_stress_test.md`.
-- Production workflow requires a clean worktree and records its full commit.
 
 ## Fixed decisions
 
@@ -84,7 +84,7 @@ latents.
 ## Verification
 
 - Complete implementation diff and stale-reference review: passed.
-- Ruff lint, Ruff format, `git diff --check`, shell syntax, and all 45 tests
+- Ruff lint, Ruff format, `git diff --check`, shell syntax, and all 46 tests
   passed in the exact remote environment.
 - Installed direct dependencies match the root `uv.lock`; `pip check` reports no
   broken requirements. Reference distributions and both external Lightning
@@ -115,28 +115,59 @@ training and evaluation artifact.
 
 ## Cleanup transaction
 
-The raw dataset, portable released-LeWM weights, and frame latents are active
-inputs and must remain. Earlier H25-only learned weights, Lightning state,
-evaluation JSON, and versioned result files are deleted only after the H50
-training, open-loop evaluation, all nine closed-loop runs, and final report are
-verified. No backup, compatibility reader, or duplicate configuration is kept
-after that replacement point.
+The cleanup transaction completed after strict loading, open-loop validation,
+all nine closed-loop runs, and joint summary validation passed:
+
+- removed the superseded H25 learned weights, results, Lightning state, and logs;
+- removed periodic/last tensor exports and completed-run Lightning checkpoints;
+- removed the obsolete Push-T object checkpoint and extracted raw archive;
+- retained the active HDF5 dataset, portable released-LeWM artifact, immutable
+  frame latents, three best learned weights, per-task JSON, and paired manifest.
+
+The verified H50 run directory was reduced from about 1.4 GB to 77 MB. Training
+callbacks now export only the best portable tensor weights; Lightning state is
+used only for interrupted-run recovery and is not part of a finalized run.
 
 ## Training
 
-Not started.
+Completed from clean revision
+`01eccc3ccafba8c1eae140d504ad8abe523484f0` with seed `3072`:
+
+| Component | Epochs | Batch size | Best validation loss |
+|---|---:|---:|---:|
+| Fast-LeWM-H50 | 10 | 15,000 | 0.216866 |
+| GC-IDM-H50 | 100 | 700,000 | 0.381006 |
+| LARC-H50 | 50 | 26,000 | 0.450797 |
+
+Fast-LeWM used about 22.5 GB on the current 24 GB GPU. This was achieved only
+through the checked-in batch/loader configuration; no memory threshold or gate
+exists. The 2,336,736 cached frame latents were reused without re-encoding.
 
 ## Evaluation
 
-Not started.
+Completed for CEM, GC-IDM, and LARC at O25/O35/O50. The shared manifest contains
+50 unique held-out episode/start pairs and has SHA-256
+`aa8c8845d82374807db8917f3876cc5db3722e3ef7b078841fd300abed5ae50d`.
+The joint summarizer accepted all artifact, code revision, manifest, method, seed,
+task-count, success-recomputation, timing, and open-loop consistency checks.
 
 ## Results
 
-Not available.
+The final success rates are:
+
+| Goal offset | CEM | GC-IDM | LARC |
+|---:|---:|---:|---:|
+| 25 | 18% | 44% | 80% |
+| 35 | 14% | 28% | 82% |
+| 50 | 8% | 12% | 50% |
+
+See `results/RESULTS_pusht_horizon.md` and
+`docs/horizon_stress_outcome.md` for confidence intervals, paired differences,
+timing, open-loop prefixes, provenance, limitations, and interpretation.
 
 ## Queued next phase
 
-After the Push-T report is verified, Two-Room will receive complete
+Push-T is complete. Two-Room is next and has not started. It requires complete
 project-owned dataset processing, latent caching, model training, closed-loop
 evaluation, and result reporting. The available external `tworoom.h5` is an
-input artifact only; no deleted stub config is counted as implementation.
+input artifact only; no placeholder is counted as implementation.

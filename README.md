@@ -8,11 +8,24 @@ paired temporal-horizon stress test:
 - **LARC** predicts action blocks with behavior cloning plus frozen-world-model
   rollout consistency, then replans after one five-action block.
 
-One H50 Fast-LeWM, one H50 GC-IDM, and one H50 LARC checkpoint are trained with
-seed `3072`. The same learned checkpoints are evaluated at goal offsets
+One H50 Fast-LeWM, one H50 GC-IDM, and one H50 LARC checkpoint were trained with
+seed `3072`. The same learned checkpoints were evaluated at goal offsets
 `25`, `35`, and `50` on 50 paired held-out tasks with evaluation seed
 `42`. The frozen protocol is in
 [docs/pusht_horizon_stress_test.md](docs/pusht_horizon_stress_test.md).
+
+The production run is complete:
+
+| Goal offset | CEM | GC-IDM | LARC |
+|---:|---:|---:|---:|
+| 25 | 18% | 44% | 80% |
+| 35 | 14% | 28% | 82% |
+| 50 | 8% | 12% | 50% |
+
+See the [full result report](results/RESULTS_pusht_horizon.md) and
+[experiment outcome](docs/horizon_stress_outcome.md) for paired differences,
+Wilson intervals, timing, open-loop error, provenance, and limitations. This is
+a temporal-offset goal-conditioned benchmark, not classic fixed-target Push-T.
 
 ## Runtime boundary
 
@@ -168,13 +181,14 @@ terminated-row planning, nonzero-angle Push-T physics/rendering, paired
 manifest integrity, timing fields, artifact hashes, cross-offset result
 consistency, and reference-package import blocking.
 
-The final versioned report is generated as
-`results/RESULTS_pusht_horizon.md`; raw artifacts remain under
+The final versioned report is
+`results/RESULTS_pusht_horizon.md`, with the interpretation in
+`docs/horizon_stress_outcome.md`. Minimal raw artifacts remain under
 `$ACT_LEWM_RUN_ROOT/pusht/horizon_h50/`.
 
 ## Next benchmark
 
-Two-Room is queued only after the Push-T training, all nine evaluations, and
-final report are complete. It will receive a separate project-owned data,
-cache, environment, training, evaluation, and result pipeline; deleted stub
-configs are not treated as an implementation.
+Push-T is complete. Two-Room is the next phase and has not started. It requires
+a separate project-owned data reader/cache, portable checkpoint, environment,
+training, evaluation, and result pipeline; a placeholder config is not counted
+as implementation.
